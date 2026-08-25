@@ -1,0 +1,85 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+credentials*.json
+service-account*.json
+secrets/
+
+# Python and tooling
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local data and generated output
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.log
+*.bak
+*.backup
+*.tmp
+generated/
+dist/
+build/
+
+# Invoice data (real client and billing details)
+*.pdf
+*.xlsx
+*.xls
+*.csv
+invoice_template.html
+
+# Design docs (contain real client and contact details)
+docs/superpowers/
+specs.md
+
+# Archives and large binary artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+*.gz
+*.bz2
+*.xz
+*.iso
+*.dmg
+*.img
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.wav
+*.mp3
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Operating system and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
