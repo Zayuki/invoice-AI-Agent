@@ -26,6 +26,9 @@ __pycache__/
 .coverage
 htmlcov/
 
+# ngrok yaml file
+ngrok.yml
+
 # Local data and generated output
 *.db
 *.db-*

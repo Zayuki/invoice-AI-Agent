@@ -148,7 +148,7 @@ def test_outstation_destination_and_fee_render_separately_from_totals() -> None:
 
     html = render_html(make_draft(items))
 
-    assert "-KL Outstation Accommodation &amp; Transportation (RM 400)" in html
+    assert "- KL Outstation Accommodation &amp; Transportation (RM 400)" in html
     assert (
         'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">2188.00<'
         in html

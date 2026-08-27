@@ -6,6 +6,10 @@ The bot never contacts customers. You manually forward the approved PDF.
 
 ## Architecture
 
+[![Invoice AI Agent architecture diagram](invoice-agent-architecture.visual-check.1440x900.light.png)](docs/diagrams/invoice-agent-architecture.html)
+
+[Open the interactive architecture diagram](docs/diagrams/invoice-agent-architecture.html)
+
 ```mermaid
 flowchart TD
     Owner[Invoice owner] -->|Invoice details and actions| Telegram[Telegram Bot API]

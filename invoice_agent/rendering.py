@@ -228,7 +228,7 @@ def update_outstation(rendered: str, item: InvoiceItem | None) -> str:
         return rendered
     row = row_match.group(0)
     description = escape(item.description)
-    value = f"-{description} (RM {item.amount:.0f})"
+    value = f"- {description} (RM {item.amount:.0f})"
     row = re.sub(r"Outstation Accommodation.*?</td>", value + "</td>", row, count=1)
     return rendered[: row_match.start()] + row + rendered[row_match.end() :]
 

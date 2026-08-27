@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Invoice AI Agent Architecture",
+    "locale": "en",
+    "output": "invoice-agent-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/Zayuki/invoice-AI-Agent",
+      "revision": "969b896f161df3f1ed548a36410b7a7e543df932"
+    },
+    "viewBox": [1320, 720],
+    "views": [
+      {
+        "id": "chat-intake",
+        "label": "Chat intake",
+        "focus": ["owner", "telegram", "webhook", "agent", "openai"],
+        "note": "Follow a Telegram message through webhook handling and structured invoice extraction."
+      },
+      {
+        "id": "review-approval",
+        "label": "Review and approval",
+        "focus": ["agent", "store", "renderer", "pdf", "telegram", "owner"],
+        "note": "Preview state and PDF bytes are verified before owner approval completes the draft."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "owner",
+      "type": "external",
+      "label": "Invoice Owner",
+      "sublabel": "Telegram chat",
+      "pos": [40, 300],
+      "size": [150, 72]
+    },
+    {
+      "id": "telegram",
+      "type": "external",
+      "label": "Telegram Bot API",
+      "sublabel": "Messages, callbacks, PDF",
+      "pos": [250, 300],
+      "size": [170, 72],
+      "sources": [
+        {"path": "invoice_agent/telegram.py", "line": 14, "label": "Telegram client"}
+      ]
+    },
+    {
+      "id": "webhook",
+      "type": "backend",
+      "label": "FastAPI Webhook",
+      "sublabel": "POST /telegram/webhook",
+      "pos": [490, 300],
+      "size": [170, 72],
+      "sources": [
+        {"path": "invoice_agent/main.py", "line": 1, "label": "Application entry"}
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Invoice Agent",
+      "sublabel": "Conversation orchestration",
+      "pos": [730, 300],
+      "size": [180, 72],
+      "sources": [
+        {"path": "invoice_agent/agent.py", "line": 1, "label": "Agent workflow"},
+        {"path": "invoice_agent/domain.py", "line": 1, "label": "Invoice model"}
+      ]
+    },
+    {
+      "id": "openai",
+      "type": "external",
+      "label": "OpenAI",
+      "sublabel": "Structured invoice extraction",
+      "pos": [1010, 100],
+      "size": [190, 72],
+      "sources": [
+        {"path": "invoice_agent/agent.py", "line": 1, "label": "Extraction call"}
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "SQLite Store",
+      "sublabel": "Inbox, drafts, versions, status",
+      "tag": "Approval guard",
+      "pos": [690, 500],
+      "size": [190, 76],
+      "sources": [
+        {"path": "invoice_agent/store.py", "line": 29, "label": "State store"}
+      ]
+    },
+    {
+      "id": "renderer",
+      "type": "backend",
+      "label": "PDF Renderer",
+      "sublabel": "Jinja2 + Playwright",
+      "pos": [1035, 300],
+      "size": [190, 72],
+      "sources": [
+        {"path": "invoice_agent/rendering.py", "line": 1, "label": "PDF rendering"}
+      ]
+    },
+    {
+      "id": "pdf",
+      "type": "frontend",
+      "label": "Invoice Preview",
+      "sublabel": "One-page PDF artifact",
+      "pos": [1040, 500],
+      "size": [180, 72],
+      "sources": [
+        {"path": "invoice_agent/rendering.py", "line": 1, "label": "Rendered output"}
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Invoice Agent service",
+      "wraps": ["webhook", "agent", "store", "renderer", "pdf"],
+      "pad": 28
+    },
+    {
+      "kind": "security-group",
+      "label": "Owner approval boundary",
+      "wraps": ["store", "pdf"],
+      "pad": 14
+    }
+  ],
+  "connections": [
+    {
+      "id": "owner-chat",
+      "from": "owner",
+      "to": "telegram",
+      "label": "chat input + approval taps",
+      "variant": "emphasis",
+      "labelDy": -30
+    },
+    {
+      "id": "telegram-webhook",
+      "from": "telegram",
+      "to": "webhook",
+      "label": "HTTPS webhook update",
+      "labelDy": -80
+    },
+    {
+      "id": "webhook-dispatch",
+      "from": "webhook",
+      "to": "agent",
+      "label": "queued update"
+    },
+    {
+      "id": "extract-invoice",
+      "from": "agent",
+      "to": "openai",
+      "label": "structured extraction",
+      "variant": "dashed"
+    },
+    {
+      "id": "persist-draft",
+      "from": "agent",
+      "to": "store",
+      "label": "draft + preview state",
+      "labelDy": -38,
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "render-preview",
+      "from": "agent",
+      "to": "renderer",
+      "label": "render current draft",
+      "labelDy": 45
+    },
+    {
+      "id": "create-pdf",
+      "from": "renderer",
+      "to": "pdf",
+      "label": "A4 PDF + SHA-256",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[1130, 440]]
+    },
+    {
+      "id": "reviewed-bytes",
+      "from": "pdf",
+      "to": "store",
+      "label": "preview path + digest",
+      "variant": "security",
+      "labelDy": 44
+    },
+    {
+      "id": "send-review",
+      "from": "pdf",
+      "to": "telegram",
+      "label": "preview / approved document",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [[1130, 640], [335, 640]]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Primary path",
+      "items": [
+        "Telegram webhook updates are queued before processing",
+        "OpenAI returns structured invoice fields to the agent"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Review gate",
+      "items": [
+        "The owner receives a generated PDF before approval",
+        "Version and SHA-256 checks reject stale or changed previews"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "POC boundary",
+      "items": [
+        "Single-owner Telegram flow with SQLite persistence",
+        "No auth system, payment integration, or direct client delivery"
+      ]
+    }
+  ]
+}
