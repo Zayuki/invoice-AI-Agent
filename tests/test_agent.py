@@ -5,12 +5,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, call
 
 import pytest
+from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import ValidationError
 
 from invoice_agent.agent import (
     FORBIDDEN_DEEP_TOOLS,
     SYSTEM_PROMPT,
+    AgentService,
     InvoiceItemInput,
     InvoiceTools,
     ToolProgress,
@@ -503,7 +505,18 @@ def test_model_uses_configured_codex_endpoint(settings: Settings) -> None:
 
     assert model.model_name == "gpt-5.3-codex"
     assert str(model.openai_api_base) == "https://api.openai.com/v1"
+    assert model.max_tokens == 16_384
     assert model.use_responses_api is True
+
+
+@pytest.mark.asyncio
+async def test_agent_rejects_empty_model_response() -> None:
+    graph = AsyncMock()
+    graph.ainvoke.return_value = {"messages": [AIMessage(content=[])]}
+    agent = AgentService(graph, None, "123")
+
+    with pytest.raises(RuntimeError, match="Model returned an empty response"):
+        await agent.reply("Invoice details")
 
 
 def test_build_agent_returns_compiled_graph(

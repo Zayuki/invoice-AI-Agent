@@ -326,6 +326,8 @@ class AgentService:
             config=config,
         )
         response_text = message_content(result["messages"][-1].content)
+        if not response_text.strip():
+            raise RuntimeError("Model returned an empty response")
         draft = self.tools.current_draft()
         if draft.status == DraftStatus.PREVIEWED and draft.preview_path:
             return AgentReply(
@@ -416,6 +418,7 @@ def build_model(settings: Settings) -> ChatOpenAI:
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         model=settings.openai_model,
+        max_completion_tokens=16_384,
         reasoning_effort="medium",
         use_responses_api=True,
     )
