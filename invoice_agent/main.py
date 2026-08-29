@@ -12,7 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from invoice_agent.agent import AgentService, InvoiceTools, ToolProgress, build_agent
+from invoice_agent.agent import INITIAL_STATUS, AgentService, InvoiceTools, ToolProgress, build_agent
 from invoice_agent.config import Settings
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import InboxUpdate, StalePreviewError, Store, payload_chat_id
@@ -150,7 +150,7 @@ class UpdateWorker:
             )
             return
         indicator = WorkIndicator(self.telegram, chat_id)
-        status = "🔍 Reading your invoice…"
+        status = INITIAL_STATUS
         message = await self.telegram.send_message(chat_id, status)
         progress = ToolProgress(
             partial(self.telegram.edit_message, chat_id, message["message_id"]),

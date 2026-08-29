@@ -95,6 +95,7 @@ TOOL_PROGRESS = {
     "prepare_pdf": "📄 Generating PDF preview…",
     "discard_draft": "🗑️ Cancelling invoice…",
 }
+INITIAL_STATUS = TOOL_PROGRESS["get_draft"]
 AGENT_TIMEOUT_SECONDS = 300.0
 
 

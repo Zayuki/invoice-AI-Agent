@@ -107,20 +107,15 @@ def is_valid_language(value: str) -> bool:
 
 def validate_draft(draft: InvoiceDraft) -> DraftValidation:
     missing = [name for name in REQUIRED_FIELDS if not getattr(draft, name)]
-    if not draft.table_count and not draft.pax_count:
+    if not any(
+        count is not None and count > 0
+        for count in (draft.table_count, draft.pax_count)
+    ):
         missing.append("table_count")
     if draft.event_time and draft.event_time not in {"Dinner", "Luncheon"}:
         missing.append("event_time")
     if draft.event_style and draft.event_style not in get_args(EventStyle):
         missing.append("event_style")
-    if (
-        not any(
-            count is not None and count > 0
-            for count in (draft.table_count, draft.pax_count)
-        )
-        and "table_count" not in missing
-    ):
-        missing.append("table_count")
     if draft.language and not is_valid_language(draft.language):
         missing.append("language")
     primary_items = [item for item in draft.items if item.kind == "primary"]
