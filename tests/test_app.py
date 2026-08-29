@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from invoice_agent import main
 from invoice_agent.agent import AgentReply, AgentService, InvoiceTools
 from invoice_agent.config import Settings
 from invoice_agent.domain import InvoiceDraft, InvoiceItem
@@ -92,6 +93,18 @@ class BlockedAgent:
     async def reply(self, text: str, progress: Any = None) -> AgentReply:
         await self.release.wait()
         return AgentReply("Slow reply")
+
+
+class FlakyAgent:
+    def __init__(self, failures: int, reply: AgentReply) -> None:
+        self.failures = failures
+        self.reply_value = reply
+
+    async def reply(self, text: str, progress: Any = None) -> AgentReply:
+        if self.failures > 0:
+            self.failures -= 1
+            raise TimeoutError
+        return self.reply_value
 
 
 async def wait_for_message(telegram: FakeTelegram, text: str) -> None:
@@ -383,3 +396,43 @@ async def test_slow_chat_does_not_block_other_chat(tmp_path: Path) -> None:
         await wait_for_message(telegram, "Slow reply")
     finally:
         await pool.stop()
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_retries_then_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "RETRY_DELAY_SECONDS", 0)
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    worker = UpdateWorker(store, telegram, 123, FlakyAgent(1, AgentReply("Recovered")))
+    store.enqueue_update(20, 123, message_update(20, 123))
+
+    await worker.process_pending()
+
+    assert store.get_inbox(20).status == "done"
+    assert ("Recovered", None) in telegram.messages
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_gives_up_after_max_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "RETRY_DELAY_SECONDS", 0)
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    worker = UpdateWorker(store, telegram, 123, FlakyAgent(5, AgentReply("unused")))
+    store.enqueue_update(21, 123, message_update(21, 123))
+
+    await worker.process_pending()
+
+    failed = store.get_inbox(21)
+    assert failed.status == "failed"
+    assert failed.error == "TimeoutError"
+    assert failed.attempts == 2
+    retry_texts = [text for text, markup in telegram.messages if markup]
+    assert retry_texts == ["Something went wrong. Try again?"]

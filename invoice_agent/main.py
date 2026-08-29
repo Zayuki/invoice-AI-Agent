@@ -8,16 +8,21 @@ from functools import partial
 from time import monotonic
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 from invoice_agent.agent import AgentService, InvoiceTools, ToolProgress, build_agent
 from invoice_agent.config import Settings
 from invoice_agent.rendering import PdfRenderer
-from invoice_agent.store import StalePreviewError, Store, payload_chat_id
-from invoice_agent.telegram import TelegramClient, WorkIndicator
+from invoice_agent.store import InboxUpdate, StalePreviewError, Store, payload_chat_id
+from invoice_agent.telegram import TelegramAPIError, TelegramClient, WorkIndicator
 
 LOGGER = logging.getLogger(__name__)
+
+MAX_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 2.0
+TRANSIENT_ERRORS = (TimeoutError, httpx.HTTPError, TelegramAPIError)
 
 
 @dataclass
@@ -73,10 +78,11 @@ class UpdateWorker:
                 "callback" if "callback_query" in update.payload else "message"
             )
             LOGGER.info(
-                "Processing Telegram update update_id=%s chat_id=%s kind=%s",
+                "Processing Telegram update update_id=%s chat_id=%s kind=%s attempt=%s",
                 update.update_id,
                 self.chat_id,
                 update_kind,
+                update.attempts,
             )
             try:
                 await self.process_update(update.payload)
@@ -86,20 +92,39 @@ class UpdateWorker:
                     update.update_id,
                     (monotonic() - started) * 1000,
                 )
-            except Exception as error:
-                LOGGER.exception(
-                    "Telegram update failed update_id=%s chat_id=%s duration_ms=%.0f",
-                    update.update_id,
-                    self.chat_id,
-                    (monotonic() - started) * 1000,
-                )
-                self.store.fail_update(update.update_id, type(error).__name__)
-                with suppress(Exception):
-                    await self.telegram.send_message(
-                        self.chat_id,
-                        "Something went wrong. Try again?",
-                        retry_keyboard(update.update_id),
+            except TRANSIENT_ERRORS as error:
+                if update.attempts < MAX_ATTEMPTS:
+                    LOGGER.warning(
+                        "Retrying Telegram update update_id=%s after %s",
+                        update.update_id,
+                        type(error).__name__,
                     )
+                    self.store.retry_update(update.update_id)
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * update.attempts)
+                    continue
+                await self.report_failure(update, error, started)
+            except Exception as error:
+                await self.report_failure(update, error, started)
+
+    async def report_failure(
+        self,
+        update: InboxUpdate,
+        error: Exception,
+        started: float,
+    ) -> None:
+        LOGGER.exception(
+            "Telegram update failed update_id=%s chat_id=%s duration_ms=%.0f",
+            update.update_id,
+            self.chat_id,
+            (monotonic() - started) * 1000,
+        )
+        self.store.fail_update(update.update_id, type(error).__name__)
+        with suppress(Exception):
+            await self.telegram.send_message(
+                self.chat_id,
+                "Something went wrong. Try again?",
+                retry_keyboard(update.update_id),
+            )
 
     async def process_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:

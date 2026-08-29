@@ -417,3 +417,14 @@ def test_database_runs_in_wal_mode(store: Store) -> None:
         mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
 
     assert mode == "wal"
+
+
+def test_claim_counts_attempts(store: Store) -> None:
+    store.enqueue_update(3, 123, {"message": {"chat": {"id": 123}}})
+
+    first = store.claim_next_update(123)
+    store.retry_update(3)
+    second = store.claim_next_update(123)
+
+    assert first.attempts == 1
+    assert second.attempts == 2

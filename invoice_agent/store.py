@@ -41,6 +41,7 @@ class InboxUpdate:
     payload: dict[str, Any]
     status: str
     error: str | None = None
+    attempts: int = 0
 
 
 class Store:
@@ -63,7 +64,8 @@ class Store:
                     chat_id INTEGER,
                     payload TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    error TEXT
+                    error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS counters (
                     name TEXT PRIMARY KEY,
@@ -77,6 +79,10 @@ class Store:
             }
             if "chat_id" not in inbox_columns:
                 connection.execute("ALTER TABLE inbox ADD COLUMN chat_id INTEGER")
+            if "attempts" not in inbox_columns:
+                connection.execute(
+                    "ALTER TABLE inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+                )
             rows = connection.execute(
                 "SELECT update_id, payload FROM inbox WHERE chat_id IS NULL"
             ).fetchall()
@@ -166,11 +172,15 @@ class Store:
             if row is None:
                 return None
             connection.execute(
-                "UPDATE inbox SET status = 'processing', error = NULL "
-                "WHERE update_id = ?",
+                "UPDATE inbox SET status = 'processing', error = NULL, "
+                "attempts = attempts + 1 WHERE update_id = ?",
                 (row["update_id"],),
             )
-            return self.inbox_from_row(row, status="processing")
+            return self.inbox_from_row(
+                row,
+                status="processing",
+                attempts=row["attempts"] + 1,
+            )
 
     def complete_update(self, update_id: int) -> None:
         with self.connect() as connection:
@@ -456,6 +466,7 @@ class Store:
         self,
         row: sqlite3.Row,
         status: str | None = None,
+        attempts: int | None = None,
     ) -> InboxUpdate:
         return InboxUpdate(
             update_id=row["update_id"],
@@ -463,4 +474,5 @@ class Store:
             payload=json.loads(row["payload"]),
             status=status or row["status"],
             error=row["error"],
+            attempts=row["attempts"] if attempts is None else attempts,
         )
