@@ -16,4 +16,4 @@ ENV DATABASE_PATH=/data/invoice_agent.db \
 
 EXPOSE 8000
 
-CMD ["uvicorn", "invoice_agent.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "invoice_agent.main:create_configured_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
