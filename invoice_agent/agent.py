@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 from deepagents import (
@@ -19,7 +19,14 @@ from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    WithJsonSchema,
+    field_validator,
+    model_validator,
+)
 
 from invoice_agent.config import Settings
 from invoice_agent.domain import (
@@ -105,12 +112,16 @@ class ToolProgress(AsyncCallbackHandler):
             await self.set_status(status)
 
 
+# OpenAI rejects the lookahead in Pydantic's Decimal string pattern.
+Money = Annotated[Decimal, WithJsonSchema({"type": "string"})]
+
+
 class InvoiceItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str = Field(min_length=1)
     quantity: int = Field(gt=0)
-    unit_price: Decimal = Field(ge=0)
+    unit_price: Money = Field(ge=0)
     kind: Literal["primary", "outstation", "rom", "floor_manager", "dj"]
 
     @model_validator(mode="after")
@@ -139,7 +150,7 @@ class UpdateDraftInput(BaseModel):
     event_date: str | None = None
     event_time: Literal["Dinner", "Luncheon"] | None = None
     venue: str | None = None
-    booking_fee: Decimal | None = Field(default=None, ge=0)
+    booking_fee: Money | None = Field(default=None, ge=0)
     items: list[InvoiceItemInput] | None = None
     remove_item_kinds: list[OptionalItemKind] = Field(default_factory=list)
     language: str | None = None

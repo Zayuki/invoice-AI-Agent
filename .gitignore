@@ -26,6 +26,8 @@ __pycache__/
 .coverage
 htmlcov/
 
+#aws
+*.pem
 # ngrok yaml file
 ngrok.yml
 

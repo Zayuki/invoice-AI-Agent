@@ -42,7 +42,7 @@ Telegram delivers messages and button callbacks to the FastAPI webhook. The webh
 - **Validation and data modeling:** Pydantic 2, dataclasses, and `Decimal` money calculations
 - **Persistence:** SQLite for the update inbox and invoice drafts; LangGraph SQLite checkpoints for conversation state
 - **PDF generation:** Jinja2 HTML templating, Playwright with Chromium, and pypdf verification
-- **Local webhook tunnel:** ngrok
+- **Webhook tunnel:** Cloudflare Tunnel (cloudflared)
 - **Quality:** pytest, pytest-asyncio, and Ruff
 
 ## Requirements
@@ -50,7 +50,7 @@ Telegram delivers messages and button callbacks to the FastAPI webhook. The webh
 - Python 3.12
 - A Telegram bot token from BotFather
 - An OpenAI-compatible endpoint with access to the configured Codex model
-- ngrok for exposing the local webhook over HTTPS
+- A Cloudflare account with your domain's nameservers on Cloudflare, for the tunnel
 
 ## Setup
 
@@ -63,31 +63,33 @@ cp .env.example .env
 
 Fill in `.env`. Set `TELEGRAM_ALLOWED_CHAT_IDS` to the comma-separated numeric chat IDs that may use the bot. Telegram authorization uses chat IDs, not phone numbers. You can obtain a chat ID by messaging the bot and inspecting a development webhook update or Telegram's `getUpdates` response before setting the production webhook.
 
-Install and authenticate ngrok once on macOS:
+Create the tunnel once, on the deployment host:
 
 ```bash
-brew install ngrok
-ngrok config add-authtoken YOUR_NGROK_AUTHTOKEN
+cloudflared tunnel login          # opens browser, pick your domain
+cloudflared tunnel create invoice-agent
+cloudflared tunnel route dns invoice-agent bot.emceecharrine.com
+cloudflared tunnel token invoice-agent   # prints CLOUDFLARE_TUNNEL_TOKEN
 ```
 
-## Start Locally with ngrok
+Put the printed token in `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
 
-Keep the following three terminals open.
-
-### Terminal 1: Start the API
+## Run with Podman Compose
 
 ```bash
 cd "/path/to/invoice 2"
 set -a
 source .env
 set +a
-.venv/bin/uvicorn invoice_agent.main:create_configured_app --factory --host 0.0.0.0 --port 8000 --reload
+podman-compose up -d
 ```
+
+This starts the API and a `cloudflared` container that tunnels `bot.emceecharrine.com` straight to the `invoice-agent` service — no host port needs to be open.
 
 Confirm the API is healthy:
 
 ```bash
-curl http://127.0.0.1:8000/health
+podman exec invoice-agent-invoice-agent-1 curl -s http://127.0.0.1:8000/health
 ```
 
 Expected response:
@@ -96,20 +98,10 @@ Expected response:
 {"status":"ok"}
 ```
 
-Restart Uvicorn after changing `.env`. The application reads environment variables only when it starts.
+Restart the compose stack after changing `.env`. The application reads environment variables only when it starts.
 Set `LOG_LEVEL=DEBUG`, `INFO`, `WARNING`, or `ERROR` to change application log verbosity. The default is `INFO`.
 
-### Terminal 2: Start ngrok
-
-```bash
-ngrok http 8000
-```
-
-Leave ngrok running. Its local request inspector is available at `http://127.0.0.1:4040`.
-
-### Terminal 3: Register the Telegram webhook
-
-Load the same `.env`, discover ngrok's current HTTPS URL, and register it:
+### Register the Telegram webhook
 
 ```bash
 cd "/path/to/invoice 2"
@@ -117,10 +109,7 @@ set -a
 source .env
 set +a
 
-PUBLIC_BASE_URL=$(
-  curl -s http://127.0.0.1:4040/api/tunnels |
-  .venv/bin/python -c 'import json, sys; print(next(t["public_url"] for t in json.load(sys.stdin)["tunnels"] if t["public_url"].startswith("https://")))'
-)
+PUBLIC_BASE_URL="https://bot.emceecharrine.com"
 
 curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
   -H 'Content-Type: application/json' \
@@ -131,19 +120,18 @@ Verify the registration:
 
 ```bash
 curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" |
-  .venv/bin/python -m json.tool
+  python3 -m json.tool
 ```
 
-The response should contain the ngrok URL and no `last_error_message`. Telegram sends the configured secret in `X-Telegram-Bot-Api-Secret-Token`. Updates from chats outside `TELEGRAM_ALLOWED_CHAT_IDS` are acknowledged and ignored.
+The response should contain `bot.emceecharrine.com` and no `last_error_message`. Telegram sends the configured secret in `X-Telegram-Bot-Api-Secret-Token`. Updates from chats outside `TELEGRAM_ALLOWED_CHAT_IDS` are acknowledged and ignored.
 
-Free ngrok URLs normally change when ngrok restarts. Repeat Terminal 3 whenever the URL changes. Uvicorn and ngrok must both remain running while using the bot.
+The hostname is fixed once routed with `cloudflared tunnel route dns`, so the webhook only needs registering again if the domain or path changes.
 
 ## Troubleshooting
 
-- No bot response and an empty `inbox` table: verify `getWebhookInfo` contains the current ngrok URL.
-- Telegram reaches the API but updates are ignored: confirm its numeric chat ID appears in `TELEGRAM_ALLOWED_CHAT_IDS`, then restart Uvicorn.
+- No bot response and an empty `inbox` table: verify `getWebhookInfo` contains `bot.emceecharrine.com`, and that the `cloudflared` container is running (`podman logs -f <cloudflared-container>`).
+- Telegram reaches the API but updates are ignored: confirm its numeric chat ID appears in `TELEGRAM_ALLOWED_CHAT_IDS`, then restart the compose stack.
 - `429 FreeUsageLimitError`: the configured OpenAI-compatible provider has exhausted its quota or rate limit.
-- Inspect webhook traffic at `http://127.0.0.1:4040` and API logs in Terminal 1.
 
 ## Use
 
@@ -198,5 +186,5 @@ Telegram delivers messages and button callbacks to the FastAPI webhook. The webh
 - **Validation and data modeling:** Pydantic 2, dataclasses, and `Decimal` money calculations
 - **Persistence:** SQLite for the update inbox and invoice drafts; LangGraph SQLite checkpoints for conversation state
 - **PDF generation:** Jinja2 HTML templating, Playwright with Chromium, and pypdf verification
-- **Local webhook tunnel:** ngrok
+- **Webhook tunnel:** Cloudflare Tunnel (cloudflared)
 - **Quality:** pytest, pytest-asyncio, and Ruff

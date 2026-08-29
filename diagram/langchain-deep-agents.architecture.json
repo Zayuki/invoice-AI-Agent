@@ -1,0 +1,443 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "LangChain Deep Agents",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1370,
+      520
+    ],
+    "views": [
+      {
+        "id": "agent-loop",
+        "label": "Agent loop",
+        "focus": [
+          "client",
+          "agent",
+          "model",
+          "toolnode"
+        ],
+        "note": "create_deep_agent compiles a LangGraph StateGraph that alternates model and tool nodes."
+      },
+      {
+        "id": "middleware",
+        "label": "Middleware stack",
+        "focus": [
+          "summarize",
+          "caching",
+          "hitl",
+          "planning",
+          "fs",
+          "subagent"
+        ],
+        "note": "Ordered middleware inject prompts, register tools, and wrap the model and tool calls."
+      },
+      {
+        "id": "builtin-tools",
+        "label": "Built-in tools",
+        "focus": [
+          "toolnode",
+          "planning",
+          "fs",
+          "subagent",
+          "usertools"
+        ],
+        "note": "Planning, filesystem, and sub-agent tools share one tool node with user and MCP tools."
+      },
+      {
+        "id": "persistence",
+        "label": "State and persistence",
+        "focus": [
+          "agent",
+          "checkpointer",
+          "state",
+          "backend",
+          "store"
+        ],
+        "note": "The checkpointer snapshots the thread; the backend decides where files actually live."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "summarize",
+      "type": "backend",
+      "label": "SummarizationMiddleware",
+      "sublabel": "before_model \u00b7 token threshold",
+      "pos": [
+        300,
+        28
+      ],
+      "size": [
+        240,
+        62
+      ]
+    },
+    {
+      "id": "caching",
+      "type": "backend",
+      "label": "PromptCachingMiddleware",
+      "sublabel": "wrap_model_call \u00b7 cache_control",
+      "pos": [
+        580,
+        28
+      ],
+      "size": [
+        240,
+        62
+      ]
+    },
+    {
+      "id": "hitl",
+      "type": "security",
+      "label": "HumanInTheLoopMiddleware",
+      "sublabel": "interrupt() before tool call",
+      "pos": [
+        910,
+        28
+      ],
+      "size": [
+        230,
+        62
+      ],
+      "tag": "interrupt_on"
+    },
+    {
+      "id": "client",
+      "type": "external",
+      "label": "Client",
+      "sublabel": "invoke \u00b7 stream \u00b7 resume",
+      "pos": [
+        25,
+        152
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Deep Agent",
+      "sublabel": "create_deep_agent()",
+      "pos": [
+        290,
+        152
+      ],
+      "size": [
+        215,
+        72
+      ],
+      "tag": "StateGraph"
+    },
+    {
+      "id": "model",
+      "type": "external",
+      "label": "Model Node",
+      "sublabel": "bind_tools \u00b7 tool_choice",
+      "pos": [
+        570,
+        152
+      ],
+      "size": [
+        225,
+        72
+      ]
+    },
+    {
+      "id": "toolnode",
+      "type": "backend",
+      "label": "Tool Node",
+      "sublabel": "parallel calls \u00b7 ToolMessage",
+      "pos": [
+        910,
+        152
+      ],
+      "size": [
+        230,
+        72
+      ]
+    },
+    {
+      "id": "planning",
+      "type": "backend",
+      "label": "PlanningMiddleware",
+      "sublabel": "write_todos()",
+      "pos": [
+        290,
+        288
+      ],
+      "size": [
+        215,
+        72
+      ]
+    },
+    {
+      "id": "fs",
+      "type": "backend",
+      "label": "FilesystemMiddleware",
+      "sublabel": "ls \u00b7 glob \u00b7 grep \u00b7 read \u00b7 write \u00b7 edit",
+      "pos": [
+        570,
+        288
+      ],
+      "size": [
+        225,
+        72
+      ]
+    },
+    {
+      "id": "subagent",
+      "type": "backend",
+      "label": "SubAgentMiddleware",
+      "sublabel": "task() \u00b7 isolated context",
+      "pos": [
+        860,
+        288
+      ],
+      "size": [
+        225,
+        72
+      ]
+    },
+    {
+      "id": "usertools",
+      "type": "external",
+      "label": "User & MCP Tools",
+      "sublabel": "@tool \u00b7 MCP client",
+      "pos": [
+        1140,
+        288
+      ],
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "checkpointer",
+      "type": "database",
+      "label": "Checkpointer",
+      "sublabel": "Sqlite \u00b7 Postgres saver",
+      "pos": [
+        15,
+        426
+      ],
+      "size": [
+        200,
+        68
+      ]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "DeepAgentState",
+      "sublabel": "messages \u00b7 todos \u00b7 files",
+      "pos": [
+        290,
+        426
+      ],
+      "size": [
+        215,
+        68
+      ]
+    },
+    {
+      "id": "backend",
+      "type": "database",
+      "label": "Backend",
+      "sublabel": "State \u00b7 Store \u00b7 Filesystem",
+      "pos": [
+        570,
+        426
+      ],
+      "size": [
+        225,
+        68
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "BaseStore",
+      "sublabel": "cross-thread memory",
+      "pos": [
+        885,
+        426
+      ],
+      "size": [
+        225,
+        68
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Tool-registering middleware",
+      "wraps": [
+        "planning",
+        "fs",
+        "subagent"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "client-invoke",
+      "from": "client",
+      "to": "agent",
+      "label": "invoke",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-request",
+      "from": "agent",
+      "to": "model",
+      "label": "request",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tool-calls",
+      "from": "model",
+      "to": "toolnode",
+      "label": "tool_calls[]",
+      "variant": "emphasis"
+    },
+    {
+      "id": "tool-results",
+      "from": "toolnode",
+      "to": "model",
+      "label": "ToolMessage",
+      "variant": "dashed",
+      "labelDy": 34
+    },
+    {
+      "id": "hitl-gate",
+      "from": "hitl",
+      "to": "toolnode",
+      "label": "approve \u00b7 edit \u00b7 reject",
+      "variant": "security",
+      "labelDy": 40
+    },
+    {
+      "id": "trim-history",
+      "from": "summarize",
+      "to": "model",
+      "label": "trim history",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "cache-breakpoints",
+      "from": "caching",
+      "to": "model",
+      "label": "cache_control",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 58,
+      "labelDx": 60
+    },
+    {
+      "id": "dispatch-planning",
+      "from": "toolnode",
+      "to": "planning",
+      "label": "write_todos",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "dispatch-fs",
+      "from": "toolnode",
+      "to": "fs",
+      "label": "file ops",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "dispatch-task",
+      "from": "toolnode",
+      "to": "subagent",
+      "label": "task()",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 32
+    },
+    {
+      "id": "dispatch-user",
+      "from": "toolnode",
+      "to": "usertools",
+      "label": "dispatch",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "agent-checkpoint",
+      "from": "agent",
+      "to": "checkpointer",
+      "label": "checkpoint",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "todos-state",
+      "from": "planning",
+      "to": "state",
+      "label": "todos[]",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 40
+    },
+    {
+      "id": "fs-backend",
+      "from": "fs",
+      "to": "backend",
+      "label": "read / write",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 40
+    },
+    {
+      "id": "backend-store",
+      "from": "backend",
+      "to": "store",
+      "label": "StoreBackend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Agent loop",
+      "items": [
+        "create_deep_agent() compiles a StateGraph",
+        "Model node binds all registered tool schemas",
+        "Tool node runs calls in parallel",
+        "Loop ends when no tool_calls are emitted"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Middleware stack",
+      "items": [
+        "Hooks: before_model, wrap_model_call",
+        "Planning, filesystem, sub-agent tools registered",
+        "Summarization compacts at a token threshold",
+        "wrap_tool_call gates calls via interrupt()"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "State and persistence",
+      "items": [
+        "DeepAgentState = messages + todos + files",
+        "Checkpointer snapshots every super-step",
+        "Backend: State, Store, Filesystem, Composite",
+        "StoreBackend gives cross-thread file memory"
+      ]
+    }
+  ]
+}

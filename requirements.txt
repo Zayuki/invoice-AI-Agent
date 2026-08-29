@@ -1,0 +1,10 @@
+deepagents
+fastapi
+httpx
+jinja2
+langchain-openai
+langgraph-checkpoint-sqlite
+playwright
+pydantic>=2
+pypdf
+uvicorn[standard]

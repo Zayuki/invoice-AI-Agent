@@ -1,0 +1,17 @@
+services:
+  invoice-agent:
+    build: .
+    env_file: .env
+    volumes:
+      - invoice-data:/data
+
+  cloudflared:
+    image: docker.io/cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - invoice-agent
+
+volumes:
+  invoice-data:
