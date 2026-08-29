@@ -85,6 +85,9 @@ class FakeAgent:
     async def reply(self, text: str, progress: Any = None) -> AgentReply:
         return self.reply_value
 
+    async def clear_thread(self) -> None:
+        return None
+
 
 class BlockedAgent:
     def __init__(self) -> None:
@@ -312,6 +315,48 @@ async def test_current_preview_is_approved_and_returned(tmp_path: Path) -> None:
 
     assert telegram.documents == [pdf_path]
     assert telegram.callbacks == [("callback-1", "Approved")]
+
+
+@pytest.mark.asyncio
+async def test_approval_clears_conversation_thread(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    store = Store(settings.database_path)
+    store.initialize(123)
+    draft = store.save_draft(
+        123,
+        InvoiceDraft(
+            invoice_number="IV-2026-0001",
+            issue_date=date(2026, 8, 12),
+            items=(InvoiceItem("Hosting", 1, Decimal(100)),),
+        ),
+    )
+    pdf_path = tmp_path / "preview.pdf"
+    pdf_path.write_bytes(b"exact preview")
+    preview = store.save_preview(
+        123,
+        draft.id,
+        draft.version,
+        pdf_path,
+        sha256(pdf_path.read_bytes()).hexdigest(),
+    )
+    telegram = FakeTelegram()
+    graph = ResetGraph()
+    tools = InvoiceTools(store, PdfRenderer(), settings.output_dir, 123)
+    agent = AgentService(graph, tools, "123")
+    worker = UpdateWorker(store, telegram, 123, agent)
+    update = {
+        "update_id": 30,
+        "callback_query": {
+            "id": "callback-3",
+            "data": f"approve:{preview.id}:{preview.version}",
+            "message": {"chat": {"id": 123}},
+        },
+    }
+
+    await worker.process_callback(update)
+
+    assert telegram.documents == [pdf_path]
+    assert graph.checkpointer.deleted_threads == ["123"]
 
 
 @pytest.mark.asyncio

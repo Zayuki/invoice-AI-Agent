@@ -227,6 +227,7 @@ class UpdateWorker:
                 path,
                 "Approved invoice. Forward it manually to your customer.",
             )
+            await self.agent.clear_thread()
         finally:
             await indicator.stop()
 

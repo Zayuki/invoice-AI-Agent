@@ -332,9 +332,12 @@ class AgentService:
         self.thread_id = thread_id
         self.timeout = timeout
 
+    async def clear_thread(self) -> None:
+        await self.agent.checkpointer.adelete_thread(self.thread_id)
+
     async def reset(self) -> None:
         self.tools.store.cancel_active_draft(self.tools.chat_id)
-        await self.agent.checkpointer.adelete_thread(self.thread_id)
+        await self.clear_thread()
 
     async def reply(
         self,
