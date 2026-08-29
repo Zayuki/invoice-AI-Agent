@@ -12,7 +12,13 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from invoice_agent.agent import INITIAL_STATUS, AgentService, InvoiceTools, ToolProgress, build_agent
+from invoice_agent.agent import (
+    INITIAL_STATUS,
+    AgentService,
+    InvoiceTools,
+    ToolProgress,
+    build_agent,
+)
 from invoice_agent.config import Settings
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import InboxUpdate, StalePreviewError, Store, payload_chat_id
@@ -93,7 +99,7 @@ class UpdateWorker:
                     (monotonic() - started) * 1000,
                 )
             except TRANSIENT_ERRORS as error:
-                if update.attempts < MAX_ATTEMPTS:
+                if update_kind == "message" and update.attempts < MAX_ATTEMPTS:
                     LOGGER.warning(
                         "Retrying Telegram update update_id=%s after %s",
                         update.update_id,
@@ -103,7 +109,7 @@ class UpdateWorker:
                     await asyncio.sleep(RETRY_DELAY_SECONDS * update.attempts)
                     continue
                 await self.report_failure(update, error, started)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 await self.report_failure(update, error, started)
 
     async def report_failure(
@@ -172,9 +178,6 @@ class UpdateWorker:
                 return
             await progress.set_status("✅ Done.")
             await self.telegram.send_message(chat_id, reply.text)
-        except Exception:
-            await progress.set_status("⚠️ Could not finish.")
-            raise
         finally:
             await indicator.stop()
 
@@ -227,7 +230,8 @@ class UpdateWorker:
                 path,
                 "Approved invoice. Forward it manually to your customer.",
             )
-            await self.agent.clear_thread()
+            with suppress(Exception):
+                await self.agent.clear_thread()
         finally:
             await indicator.stop()
 

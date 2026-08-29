@@ -10,9 +10,9 @@ from playwright.async_api import async_playwright
 from pypdf import PdfReader
 
 from invoice_agent.domain import (
+    SERVICE_HEADINGS,
     InvoiceDraft,
     InvoiceItem,
-    SERVICE_HEADINGS,
     calculate_totals,
 )
 

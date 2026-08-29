@@ -31,9 +31,9 @@ from pydantic import (
 
 from invoice_agent.config import Settings
 from invoice_agent.domain import (
+    FIXED_HEADINGS,
     DraftStatus,
     EventStyle,
-    FIXED_HEADINGS,
     InvoiceDraft,
     InvoiceItem,
     ItemKind,
@@ -44,6 +44,7 @@ from invoice_agent.domain import (
 )
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import Store
+
 
 def choice_list(values: tuple[str, ...]) -> str:
     return ", ".join(values[:-1]) + f", or {values[-1]}"

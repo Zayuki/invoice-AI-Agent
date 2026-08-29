@@ -24,10 +24,10 @@ from invoice_agent.agent import (
 )
 from invoice_agent.config import Settings
 from invoice_agent.domain import (
-    EventStyle,
     FIXED_HEADINGS,
-    OptionalItemKind,
     SERVICE_HEADINGS,
+    EventStyle,
+    OptionalItemKind,
 )
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import Store
