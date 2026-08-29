@@ -26,9 +26,18 @@ class ClosingConnection(sqlite3.Connection):
             self.close()
 
 
+def payload_chat_id(payload: dict[str, Any]) -> int | None:
+    if "message" in payload:
+        return payload["message"].get("chat", {}).get("id")
+    if "callback_query" in payload:
+        return payload["callback_query"].get("message", {}).get("chat", {}).get("id")
+    return None
+
+
 @dataclass(frozen=True)
 class InboxUpdate:
     update_id: int
+    chat_id: int | None
     payload: dict[str, Any]
     status: str
     error: str | None = None
@@ -51,6 +60,7 @@ class Store:
                 """
                 CREATE TABLE IF NOT EXISTS inbox (
                     update_id INTEGER PRIMARY KEY,
+                    chat_id INTEGER,
                     payload TEXT NOT NULL,
                     status TEXT NOT NULL,
                     error TEXT
@@ -61,6 +71,20 @@ class Store:
                 );
                 """
             )
+            inbox_columns = {
+                column["name"]
+                for column in connection.execute("PRAGMA table_info(inbox)")
+            }
+            if "chat_id" not in inbox_columns:
+                connection.execute("ALTER TABLE inbox ADD COLUMN chat_id INTEGER")
+            rows = connection.execute(
+                "SELECT update_id, payload FROM inbox WHERE chat_id IS NULL"
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE inbox SET chat_id = ? WHERE update_id = ?",
+                    (payload_chat_id(json.loads(row["payload"])), row["update_id"]),
+                )
             columns = connection.execute("PRAGMA table_info(drafts)").fetchall()
             if not columns:
                 self.create_drafts_table(connection)
@@ -117,21 +141,27 @@ class Store:
             (f"invoice:{legacy_chat_id}",),
         )
 
-    def enqueue_update(self, update_id: int, payload: dict[str, Any]) -> bool:
+    def enqueue_update(
+        self,
+        update_id: int,
+        chat_id: int,
+        payload: dict[str, Any],
+    ) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
-                "INSERT OR IGNORE INTO inbox(update_id, payload, status) "
-                "VALUES (?, ?, 'pending')",
-                (update_id, json.dumps(payload, ensure_ascii=False)),
+                "INSERT OR IGNORE INTO inbox(update_id, chat_id, payload, status) "
+                "VALUES (?, ?, ?, 'pending')",
+                (update_id, chat_id, json.dumps(payload, ensure_ascii=False)),
             )
             return cursor.rowcount == 1
 
-    def claim_next_update(self) -> InboxUpdate | None:
+    def claim_next_update(self, chat_id: int) -> InboxUpdate | None:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT * FROM inbox WHERE status = 'pending' "
-                "ORDER BY update_id LIMIT 1"
+                "SELECT * FROM inbox WHERE status = 'pending' AND chat_id = ? "
+                "ORDER BY update_id LIMIT 1",
+                (chat_id,),
             ).fetchone()
             if row is None:
                 return None
@@ -429,6 +459,7 @@ class Store:
     ) -> InboxUpdate:
         return InboxUpdate(
             update_id=row["update_id"],
+            chat_id=row["chat_id"],
             payload=json.loads(row["payload"]),
             status=status or row["status"],
             error=row["error"],
