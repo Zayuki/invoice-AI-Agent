@@ -18,6 +18,14 @@ class InvalidTransitionError(ValueError):
     pass
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, *args: object) -> bool:
+        try:
+            return bool(super().__exit__(*args))
+        finally:
+            self.close()
+
+
 @dataclass(frozen=True)
 class InboxUpdate:
     update_id: int
@@ -31,13 +39,14 @@ class Store:
         self.path = path
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
+        connection = sqlite3.connect(self.path, timeout=30, factory=ClosingConnection)
         connection.row_factory = sqlite3.Row
         return connection
 
     def initialize(self, legacy_chat_id: int) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS inbox (

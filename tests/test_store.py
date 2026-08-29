@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -368,3 +369,18 @@ def test_cancel_active_draft_does_not_overwrite_approval(
 
     assert store.cancel_active_draft(123) is False
     assert store.get_draft(123, draft.id).status == DraftStatus.APPROVED
+
+
+def test_connection_closes_after_with_block(store: Store) -> None:
+    with store.connect() as connection:
+        connection.execute("SELECT 1")
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+
+
+def test_database_runs_in_wal_mode(store: Store) -> None:
+    with store.connect() as connection:
+        mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+
+    assert mode == "wal"
