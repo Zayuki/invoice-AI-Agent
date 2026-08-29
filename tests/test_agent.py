@@ -510,13 +510,64 @@ def test_model_uses_configured_codex_endpoint(settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_rejects_empty_model_response() -> None:
+async def test_agent_rejects_empty_model_response(
+    invoice_tools: InvoiceTools,
+) -> None:
     graph = AsyncMock()
     graph.ainvoke.return_value = {"messages": [AIMessage(content=[])]}
-    agent = AgentService(graph, None, "123")
+    agent = AgentService(graph, invoice_tools, "123")
 
     with pytest.raises(RuntimeError, match="Model returned an empty response"):
         await agent.reply("Invoice details")
+
+
+@pytest.mark.asyncio
+async def test_clarifying_question_does_not_resend_earlier_preview(
+    invoice_tools: InvoiceTools,
+) -> None:
+    draft = invoice_tools.current_draft()
+    invoice_tools.store.save_preview(
+        123,
+        draft.id,
+        draft.version,
+        Path("preview.pdf"),
+        "digest",
+    )
+    graph = AsyncMock()
+    graph.ainvoke.return_value = {
+        "messages": [AIMessage(content="Which outstation destination?")]
+    }
+    agent = AgentService(graph, invoice_tools, "123")
+
+    reply = await agent.reply("Add outstation")
+
+    assert reply.pdf_path is None
+
+
+@pytest.mark.asyncio
+async def test_prepared_preview_is_sent_with_the_reply(
+    invoice_tools: InvoiceTools,
+) -> None:
+    draft = invoice_tools.current_draft()
+    graph = AsyncMock()
+
+    async def prepare_then_answer(*args, **kwargs):
+        invoice_tools.store.save_preview(
+            123,
+            draft.id,
+            draft.version,
+            Path("preview.pdf"),
+            "digest",
+        )
+        invoice_tools.prepared_preview = True
+        return {"messages": [AIMessage(content="Invoice ready.")]}
+
+    graph.ainvoke.side_effect = prepare_then_answer
+    agent = AgentService(graph, invoice_tools, "123")
+
+    reply = await agent.reply("Confirm")
+
+    assert reply.pdf_path == Path("preview.pdf")
 
 
 def test_build_agent_returns_compiled_graph(

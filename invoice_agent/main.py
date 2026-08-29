@@ -142,7 +142,7 @@ class UpdateWorker:
                 await self.telegram.send_document(
                     chat_id,
                     reply.pdf_path,
-                    "Review this invoice.",
+                    reply.text,
                     preview_keyboard(reply.draft_id, reply.version),
                 )
                 await progress.set_status("✅ Invoice ready.")

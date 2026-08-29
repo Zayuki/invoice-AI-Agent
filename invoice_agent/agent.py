@@ -48,7 +48,8 @@ Never invent facts, selections, quantities, dates, or prices.
 Use invoice tools for every draft read, update, validation, cancellation, and PDF preparation.
 Call get_draft before changing a draft. Call validate_draft after every update.
 When validation reports missing data, ask exactly one short clarifying question.
-When validation succeeds, call prepare_pdf immediately.
+When validation succeeds and no clarifying question is pending, call prepare_pdf immediately.
+Never call prepare_pdf in the same turn as a clarifying question.
 Never ask the owner to send or type 'PDF'.
 Keep Telegram replies brief and never use tables.
 Optional services are outstation, ROM hosting, Floor Manager (fm), and Wedding DJ.
@@ -202,6 +203,7 @@ class InvoiceTools:
         self.renderer = renderer
         self.output_dir = output_dir / str(chat_id)
         self.chat_id = chat_id
+        self.prepared_preview = False
 
     def as_tools(self) -> list[BaseTool]:
         return [
@@ -287,6 +289,7 @@ class InvoiceTools:
         return json.dumps(asdict(validation), ensure_ascii=False)
 
     async def prepare_pdf(self) -> str:
+        self.prepared_preview = True
         draft = self.current_draft()
         validation = validate_draft(draft)
         if not validation.is_valid:
@@ -332,6 +335,7 @@ class AgentService:
         config: dict[str, Any] = {"configurable": {"thread_id": self.thread_id}}
         if progress:
             config["callbacks"] = [progress]
+        self.tools.prepared_preview = False
         result = await self.agent.ainvoke(
             {"messages": [HumanMessage(content=text)]},
             config=config,
@@ -340,7 +344,11 @@ class AgentService:
         if not response_text.strip():
             raise RuntimeError("Model returned an empty response")
         draft = self.tools.current_draft()
-        if draft.status == DraftStatus.PREVIEWED and draft.preview_path:
+        if (
+            self.tools.prepared_preview
+            and draft.status == DraftStatus.PREVIEWED
+            and draft.preview_path
+        ):
             return AgentReply(
                 text=response_text,
                 pdf_path=Path(draft.preview_path),
