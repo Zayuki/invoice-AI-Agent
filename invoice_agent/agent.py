@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
@@ -84,6 +85,7 @@ TOOL_PROGRESS = {
     "prepare_pdf": "📄 Generating PDF preview…",
     "discard_draft": "🗑️ Cancelling invoice…",
 }
+AGENT_TIMEOUT_SECONDS = 300.0
 
 
 class ToolProgress(AsyncCallbackHandler):
@@ -318,10 +320,17 @@ class InvoiceTools:
 
 
 class AgentService:
-    def __init__(self, agent: Any, tools: InvoiceTools, thread_id: str) -> None:
+    def __init__(
+        self,
+        agent: Any,
+        tools: InvoiceTools,
+        thread_id: str,
+        timeout: float = AGENT_TIMEOUT_SECONDS,
+    ) -> None:
         self.agent = agent
         self.tools = tools
         self.thread_id = thread_id
+        self.timeout = timeout
 
     async def reset(self) -> None:
         self.tools.store.cancel_active_draft(self.tools.chat_id)
@@ -336,10 +345,11 @@ class AgentService:
         if progress:
             config["callbacks"] = [progress]
         self.tools.prepared_preview = False
-        result = await self.agent.ainvoke(
-            {"messages": [HumanMessage(content=text)]},
-            config=config,
-        )
+        async with asyncio.timeout(self.timeout):
+            result = await self.agent.ainvoke(
+                {"messages": [HumanMessage(content=text)]},
+                config=config,
+            )
         response_text = message_content(result["messages"][-1].content)
         if not response_text.strip():
             raise RuntimeError("Model returned an empty response")

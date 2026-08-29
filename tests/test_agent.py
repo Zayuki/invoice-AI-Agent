@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import date
 from decimal import Decimal
@@ -578,3 +579,19 @@ def test_build_agent_returns_compiled_graph(
 
     assert {"__start__", "model", "tools"}.issubset(agent.nodes)
     assert Path(settings.output_dir).name == "generated"
+
+
+class HangingGraph:
+    async def ainvoke(self, *args, **kwargs):
+        await asyncio.sleep(3600)
+
+
+@pytest.mark.asyncio
+async def test_reply_times_out_when_model_hangs(tmp_path):
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    tools = InvoiceTools(store, PdfRenderer(), tmp_path / "generated", 123)
+    service = AgentService(HangingGraph(), tools, "123", timeout=0.05)
+
+    with pytest.raises(TimeoutError):
+        await service.reply("Create invoice")
