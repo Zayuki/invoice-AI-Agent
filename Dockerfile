@@ -1,22 +1,12 @@
-FROM ghcr.io/astral-sh/uv:0.5-python3.12-bookworm-slim AS builder
+FROM docker.io/library/python:3.12-slim
 
 WORKDIR /app
-
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
 
 COPY requirements.txt .
-RUN uv venv /opt/venv \
-    && uv pip install --python /opt/venv/bin/python --no-cache -r requirements.txt
-
-FROM python:3.12-slim
-
-WORKDIR /app
-
-ENV PATH="/opt/venv/bin:$PATH"
-
-COPY --from=builder /opt/venv /opt/venv
-RUN playwright install --with-deps chromium
+RUN pip install --no-cache-dir -r requirements.txt \
+    && playwright install --with-deps chromium \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY invoice_agent ./invoice_agent
 COPY invoice_template.html .
