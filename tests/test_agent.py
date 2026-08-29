@@ -3,6 +3,7 @@ import json
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import get_args
 from unittest.mock import AsyncMock, call
 
 import pytest
@@ -22,6 +23,12 @@ from invoice_agent.agent import (
     build_model,
 )
 from invoice_agent.config import Settings
+from invoice_agent.domain import (
+    EventStyle,
+    FIXED_HEADINGS,
+    OptionalItemKind,
+    SERVICE_HEADINGS,
+)
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import Store
 
@@ -484,6 +491,24 @@ def test_system_prompt_defines_invoice_flow() -> None:
     assert "Never rename these service headings" in SYSTEM_PROMPT
     assert "ask for its destination first and its fee second" in SYSTEM_PROMPT
     assert "Never default an outstation destination or fee" in SYSTEM_PROMPT
+
+
+def test_system_prompt_uses_domain_constants() -> None:
+    for style in get_args(EventStyle):
+        assert style in SYSTEM_PROMPT
+    for kind in get_args(OptionalItemKind):
+        assert kind in SYSTEM_PROMPT
+    for heading in FIXED_HEADINGS:
+        assert heading in SYSTEM_PROMPT
+    assert "{Destination} Outstation Accommodation & Transportation" in SYSTEM_PROMPT
+
+
+def test_renderer_uses_service_headings() -> None:
+    values = SERVICE_HEADINGS.values()
+    assert "Professional Emcee Hosting" in values
+    assert "ROM Hosting (Before Dinner Start)" in values
+    assert "Floor Manager" in values
+    assert "Wedding DJ Services" in values
 
 
 def test_deep_agent_profile_excludes_general_tools() -> None:
