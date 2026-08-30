@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -78,29 +79,62 @@ def store(tmp_path) -> Store:
 
 
 def test_duplicate_update_is_inserted_once(store: Store) -> None:
-    assert store.enqueue_update(42, {"update_id": 42}) is True
-    assert store.enqueue_update(42, {"update_id": 42}) is False
+    assert store.enqueue_update(42, 123, {"update_id": 42}) is True
+    assert store.enqueue_update(42, 123, {"update_id": 42}) is False
 
 
 def test_processing_update_is_recovered_after_restart(tmp_path) -> None:
     database_path = tmp_path / "invoice.db"
     first = Store(database_path)
     first.initialize(123)
-    first.enqueue_update(7, {"update_id": 7})
-    assert first.claim_next_update().update_id == 7
+    first.enqueue_update(7, 123, {"update_id": 7})
+    assert first.claim_next_update(123).update_id == 7
 
     second = Store(database_path)
     second.initialize(123)
 
-    assert second.claim_next_update().update_id == 7
+    assert second.claim_next_update(123).update_id == 7
 
 
 def test_completed_update_is_not_claimed_again(store: Store) -> None:
-    store.enqueue_update(9, {"update_id": 9})
-    claimed = store.claim_next_update()
+    store.enqueue_update(9, 123, {"update_id": 9})
+    claimed = store.claim_next_update(123)
     store.complete_update(claimed.update_id)
 
-    assert store.claim_next_update() is None
+    assert store.claim_next_update(123) is None
+
+
+def test_claim_is_scoped_to_chat(store: Store) -> None:
+    store.enqueue_update(1, 123, {"message": {"chat": {"id": 123}}})
+    store.enqueue_update(2, 456, {"message": {"chat": {"id": 456}}})
+
+    claimed = store.claim_next_update(456)
+
+    assert claimed.update_id == 2
+    assert claimed.chat_id == 456
+    assert store.get_inbox(1).status == "pending"
+
+
+def test_inbox_migration_backfills_chat_id(tmp_path) -> None:
+    path = tmp_path / "invoice.db"
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.execute(
+            "CREATE TABLE inbox (update_id INTEGER PRIMARY KEY, "
+            "payload TEXT NOT NULL, status TEXT NOT NULL, error TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO inbox VALUES (7, ?, 'pending', NULL)",
+            (json.dumps({"message": {"chat": {"id": 123}}}),),
+        )
+    connection.close()
+    store = Store(path)
+    store.initialize(123)
+
+    claimed = store.claim_next_update(123)
+
+    assert claimed.update_id == 7
+    assert claimed.chat_id == 123
 
 
 def test_chats_have_independent_drafts_and_invoice_sequences(store: Store) -> None:
@@ -368,3 +402,29 @@ def test_cancel_active_draft_does_not_overwrite_approval(
 
     assert store.cancel_active_draft(123) is False
     assert store.get_draft(123, draft.id).status == DraftStatus.APPROVED
+
+
+def test_connection_closes_after_with_block(store: Store) -> None:
+    with store.connect() as connection:
+        connection.execute("SELECT 1")
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.execute("SELECT 1")
+
+
+def test_database_runs_in_wal_mode(store: Store) -> None:
+    with store.connect() as connection:
+        mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+
+    assert mode == "wal"
+
+
+def test_claim_counts_attempts(store: Store) -> None:
+    store.enqueue_update(3, 123, {"message": {"chat": {"id": 123}}})
+
+    first = store.claim_next_update(123)
+    store.retry_update(3)
+    second = store.claim_next_update(123)
+
+    assert first.attempts == 1
+    assert second.attempts == 2

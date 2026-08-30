@@ -18,12 +18,30 @@ class InvalidTransitionError(ValueError):
     pass
 
 
+class ClosingConnection(sqlite3.Connection):
+    def __exit__(self, *args: object) -> bool:
+        try:
+            return bool(super().__exit__(*args))
+        finally:
+            self.close()
+
+
+def payload_chat_id(payload: dict[str, Any]) -> int | None:
+    if "message" in payload:
+        return payload["message"].get("chat", {}).get("id")
+    if "callback_query" in payload:
+        return payload["callback_query"].get("message", {}).get("chat", {}).get("id")
+    return None
+
+
 @dataclass(frozen=True)
 class InboxUpdate:
     update_id: int
+    chat_id: int | None
     payload: dict[str, Any]
     status: str
     error: str | None = None
+    attempts: int = 0
 
 
 class Store:
@@ -31,20 +49,23 @@ class Store:
         self.path = path
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=30)
+        connection = sqlite3.connect(self.path, timeout=30, factory=ClosingConnection)
         connection.row_factory = sqlite3.Row
         return connection
 
     def initialize(self, legacy_chat_id: int) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as connection:
+            connection.execute("PRAGMA journal_mode=WAL")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS inbox (
                     update_id INTEGER PRIMARY KEY,
+                    chat_id INTEGER,
                     payload TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    error TEXT
+                    error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS counters (
                     name TEXT PRIMARY KEY,
@@ -52,6 +73,24 @@ class Store:
                 );
                 """
             )
+            inbox_columns = {
+                column["name"]
+                for column in connection.execute("PRAGMA table_info(inbox)")
+            }
+            if "chat_id" not in inbox_columns:
+                connection.execute("ALTER TABLE inbox ADD COLUMN chat_id INTEGER")
+            if "attempts" not in inbox_columns:
+                connection.execute(
+                    "ALTER TABLE inbox ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
+                )
+            rows = connection.execute(
+                "SELECT update_id, payload FROM inbox WHERE chat_id IS NULL"
+            ).fetchall()
+            for row in rows:
+                connection.execute(
+                    "UPDATE inbox SET chat_id = ? WHERE update_id = ?",
+                    (payload_chat_id(json.loads(row["payload"])), row["update_id"]),
+                )
             columns = connection.execute("PRAGMA table_info(drafts)").fetchall()
             if not columns:
                 self.create_drafts_table(connection)
@@ -108,30 +147,40 @@ class Store:
             (f"invoice:{legacy_chat_id}",),
         )
 
-    def enqueue_update(self, update_id: int, payload: dict[str, Any]) -> bool:
+    def enqueue_update(
+        self,
+        update_id: int,
+        chat_id: int,
+        payload: dict[str, Any],
+    ) -> bool:
         with self.connect() as connection:
             cursor = connection.execute(
-                "INSERT OR IGNORE INTO inbox(update_id, payload, status) "
-                "VALUES (?, ?, 'pending')",
-                (update_id, json.dumps(payload, ensure_ascii=False)),
+                "INSERT OR IGNORE INTO inbox(update_id, chat_id, payload, status) "
+                "VALUES (?, ?, ?, 'pending')",
+                (update_id, chat_id, json.dumps(payload, ensure_ascii=False)),
             )
             return cursor.rowcount == 1
 
-    def claim_next_update(self) -> InboxUpdate | None:
+    def claim_next_update(self, chat_id: int) -> InboxUpdate | None:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT * FROM inbox WHERE status = 'pending' "
-                "ORDER BY update_id LIMIT 1"
+                "SELECT * FROM inbox WHERE status = 'pending' AND chat_id = ? "
+                "ORDER BY update_id LIMIT 1",
+                (chat_id,),
             ).fetchone()
             if row is None:
                 return None
             connection.execute(
-                "UPDATE inbox SET status = 'processing', error = NULL "
-                "WHERE update_id = ?",
+                "UPDATE inbox SET status = 'processing', error = NULL, "
+                "attempts = attempts + 1 WHERE update_id = ?",
                 (row["update_id"],),
             )
-            return self.inbox_from_row(row, status="processing")
+            return self.inbox_from_row(
+                row,
+                status="processing",
+                attempts=row["attempts"] + 1,
+            )
 
     def complete_update(self, update_id: int) -> None:
         with self.connect() as connection:
@@ -417,10 +466,13 @@ class Store:
         self,
         row: sqlite3.Row,
         status: str | None = None,
+        attempts: int | None = None,
     ) -> InboxUpdate:
         return InboxUpdate(
             update_id=row["update_id"],
+            chat_id=row["chat_id"],
             payload=json.loads(row["payload"]),
             status=status or row["status"],
             error=row["error"],
+            attempts=row["attempts"] if attempts is None else attempts,
         )
