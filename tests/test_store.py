@@ -274,6 +274,25 @@ def test_approval_returns_exact_current_preview(store: Store, tmp_path) -> None:
     assert store.get_draft(123, previewed.id).status == DraftStatus.APPROVED
 
 
+def test_approval_is_idempotent_after_send_failure(store: Store, tmp_path) -> None:
+    saved = store.save_draft(123, make_draft())
+    preview_path = tmp_path / "invoice.pdf"
+    preview_path.write_bytes(b"exact reviewed bytes")
+    previewed = store.save_preview(
+        123,
+        saved.id,
+        saved.version,
+        preview_path,
+        sha256(preview_path.read_bytes()).hexdigest(),
+    )
+    store.approve_preview(123, previewed.id, previewed.version)
+
+    retried_path = store.approve_preview(123, previewed.id, previewed.version)
+
+    assert retried_path.read_bytes() == b"exact reviewed bytes"
+    assert store.get_draft(123, previewed.id).status == DraftStatus.APPROVED
+
+
 def test_approval_rejects_preview_whose_bytes_changed(
     store: Store,
     tmp_path,

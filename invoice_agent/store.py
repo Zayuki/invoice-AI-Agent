@@ -333,7 +333,7 @@ class Store:
         current = self.get_draft(chat_id, draft_id)
         if (
             current.version != version
-            or current.status != DraftStatus.PREVIEWED
+            or current.status not in (DraftStatus.PREVIEWED, DraftStatus.APPROVED)
             or not current.preview_path
             or not current.preview_digest
         ):
@@ -342,11 +342,12 @@ class Store:
         digest = sha256(path.read_bytes()).hexdigest() if path.is_file() else None
         if digest != current.preview_digest:
             raise StalePreviewError("Preview bytes no longer match the review")
-        with self.connect() as connection:
-            connection.execute(
-                "UPDATE drafts SET status = 'approved' WHERE id = ? AND chat_id = ?",
-                (draft_id, chat_id),
-            )
+        if current.status != DraftStatus.APPROVED:
+            with self.connect() as connection:
+                connection.execute(
+                    "UPDATE drafts SET status = 'approved' WHERE id = ? AND chat_id = ?",
+                    (draft_id, chat_id),
+                )
         return path
 
     def cancel_draft(
