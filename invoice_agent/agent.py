@@ -97,7 +97,7 @@ TOOL_PROGRESS = {
     "discard_draft": "🗑️ Cancelling invoice…",
 }
 INITIAL_STATUS = TOOL_PROGRESS["get_draft"]
-AGENT_TIMEOUT_SECONDS = 300.0
+AGENT_TIMEOUT_SECONDS = 60.0
 
 
 class ToolProgress(AsyncCallbackHandler):
