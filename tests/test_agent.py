@@ -1,7 +1,9 @@
+import asyncio
 import json
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import get_args
 from unittest.mock import AsyncMock, call
 
 import pytest
@@ -21,6 +23,12 @@ from invoice_agent.agent import (
     build_model,
 )
 from invoice_agent.config import Settings
+from invoice_agent.domain import (
+    FIXED_HEADINGS,
+    SERVICE_HEADINGS,
+    EventStyle,
+    OptionalItemKind,
+)
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import Store
 
@@ -485,6 +493,24 @@ def test_system_prompt_defines_invoice_flow() -> None:
     assert "Never default an outstation destination or fee" in SYSTEM_PROMPT
 
 
+def test_system_prompt_uses_domain_constants() -> None:
+    for style in get_args(EventStyle):
+        assert style in SYSTEM_PROMPT
+    for kind in get_args(OptionalItemKind):
+        assert kind in SYSTEM_PROMPT
+    for heading in FIXED_HEADINGS:
+        assert heading in SYSTEM_PROMPT
+    assert "{Destination} Outstation Accommodation & Transportation" in SYSTEM_PROMPT
+
+
+def test_renderer_uses_service_headings() -> None:
+    values = SERVICE_HEADINGS.values()
+    assert "Professional Emcee Hosting" in values
+    assert "ROM Hosting (Before Dinner Start)" in values
+    assert "Floor Manager" in values
+    assert "Wedding DJ Services" in values
+
+
 def test_deep_agent_profile_excludes_general_tools() -> None:
     assert FORBIDDEN_DEEP_TOOLS == {
         "ls",
@@ -578,3 +604,19 @@ def test_build_agent_returns_compiled_graph(
 
     assert {"__start__", "model", "tools"}.issubset(agent.nodes)
     assert Path(settings.output_dir).name == "generated"
+
+
+class HangingGraph:
+    async def ainvoke(self, *args, **kwargs):
+        await asyncio.sleep(3600)
+
+
+@pytest.mark.asyncio
+async def test_reply_times_out_when_model_hangs(tmp_path):
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    tools = InvoiceTools(store, PdfRenderer(), tmp_path / "generated", 123)
+    service = AgentService(HangingGraph(), tools, "123", timeout=0.05)
+
+    with pytest.raises(TimeoutError):
+        await service.reply("Create invoice")

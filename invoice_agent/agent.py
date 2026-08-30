@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
@@ -5,7 +6,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 from zoneinfo import ZoneInfo
 
 from deepagents import (
@@ -30,10 +31,13 @@ from pydantic import (
 
 from invoice_agent.config import Settings
 from invoice_agent.domain import (
+    FIXED_HEADINGS,
     DraftStatus,
     EventStyle,
     InvoiceDraft,
     InvoiceItem,
+    ItemKind,
+    OptionalItemKind,
     calculate_totals,
     is_valid_language,
     validate_draft,
@@ -41,7 +45,15 @@ from invoice_agent.domain import (
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import Store
 
-SYSTEM_PROMPT = """You create one wedding invoice for its owner.
+
+def choice_list(values: tuple[str, ...]) -> str:
+    return ", ".join(values[:-1]) + f", or {values[-1]}"
+
+
+EVENT_STYLE_VALUES = get_args(EventStyle)
+OPTIONAL_KIND_VALUES = get_args(OptionalItemKind)
+
+SYSTEM_PROMPT = f"""You create one wedding invoice for its owner.
 Preserve customer names exactly, including Chinese names.
 Translate all wedding reception details and service descriptions to English before saving them.
 Never invent facts, selections, quantities, dates, or prices.
@@ -52,17 +64,17 @@ When validation succeeds and no clarifying question is pending, call prepare_pdf
 Never call prepare_pdf in the same turn as a clarifying question.
 Never ask the owner to send or type 'PDF'.
 Keep Telegram replies brief and never use tables.
-Optional services are outstation, ROM hosting, Floor Manager (fm), and Wedding DJ.
+Optional service kinds are {", ".join(OPTIONAL_KIND_VALUES)}; the owner may say outstation, ROM hosting, Floor Manager (fm), or Wedding DJ.
 For explicit remove, cancel, or do-not-include requests, pass optional service kinds in remove_item_kinds.
 When outstation service is selected, ask for its destination first and its fee second, one short question at a time.
-Only create the outstation item after both are supplied. Use description `{Destination} Outstation Accommodation & Transportation`, quantity 1, and the owner-entered fee as unit_price.
+Only create the outstation item after both are supplied. Use description `{{Destination}} Outstation Accommodation & Transportation`, quantity 1, and the owner-entered fee as unit_price.
 Never default an outstation destination or fee.
 Time must be exactly Dinner or Luncheon. Treat lunch as Luncheon.
 Language must be Mandarin or English with percentages totalling 100%, formatted like Mandarin (100%), English (100%), or Mandarin (50%) & English (50%).
-Event style must be exactly Oriental Style, Western Style, or Buffet Style.
+Event style must be exactly {choice_list(EVENT_STYLE_VALUES)}.
 Collect either table_count or pax_count as a positive whole number. Never add it to a service description.
 When the owner corrects saved invoice data, use update_draft to replace it.
-Never rename these service headings: Professional Emcee Hosting, ROM Hosting (Before Dinner Start), Program Planning & Management, Floor Manager, and Wedding DJ Services.
+Never rename these service headings: {", ".join(FIXED_HEADINGS[:-1])}, and {FIXED_HEADINGS[-1]}.
 Never claim approval. Never send or address anything to a customer.
 """
 FORBIDDEN_DEEP_TOOLS = {
@@ -84,6 +96,8 @@ TOOL_PROGRESS = {
     "prepare_pdf": "📄 Generating PDF preview…",
     "discard_draft": "🗑️ Cancelling invoice…",
 }
+INITIAL_STATUS = TOOL_PROGRESS["get_draft"]
+AGENT_TIMEOUT_SECONDS = 300.0
 
 
 class ToolProgress(AsyncCallbackHandler):
@@ -123,7 +137,7 @@ class InvoiceItemInput(BaseModel):
     description: str = Field(min_length=1)
     quantity: int = Field(gt=0)
     unit_price: Money = Field(ge=0)
-    kind: Literal["primary", "outstation", "rom", "floor_manager", "dj"]
+    kind: ItemKind
 
     @model_validator(mode="after")
     def has_outstation_destination(self) -> "InvoiceItemInput":
@@ -136,9 +150,6 @@ class InvoiceItemInput(BaseModel):
         ):
             raise ValueError("outstation description must start with a destination")
         return self
-
-
-OptionalItemKind = Literal["outstation", "rom", "floor_manager", "dj"]
 
 
 class UpdateDraftInput(BaseModel):
@@ -318,14 +329,24 @@ class InvoiceTools:
 
 
 class AgentService:
-    def __init__(self, agent: Any, tools: InvoiceTools, thread_id: str) -> None:
+    def __init__(
+        self,
+        agent: Any,
+        tools: InvoiceTools,
+        thread_id: str,
+        timeout: float = AGENT_TIMEOUT_SECONDS,
+    ) -> None:
         self.agent = agent
         self.tools = tools
         self.thread_id = thread_id
+        self.timeout = timeout
+
+    async def clear_thread(self) -> None:
+        await self.agent.checkpointer.adelete_thread(self.thread_id)
 
     async def reset(self) -> None:
         self.tools.store.cancel_active_draft(self.tools.chat_id)
-        await self.agent.checkpointer.adelete_thread(self.thread_id)
+        await self.clear_thread()
 
     async def reply(
         self,
@@ -336,10 +357,11 @@ class AgentService:
         if progress:
             config["callbacks"] = [progress]
         self.tools.prepared_preview = False
-        result = await self.agent.ainvoke(
-            {"messages": [HumanMessage(content=text)]},
-            config=config,
-        )
+        async with asyncio.timeout(self.timeout):
+            result = await self.agent.ainvoke(
+                {"messages": [HumanMessage(content=text)]},
+                config=config,
+            )
         response_text = message_content(result["messages"][-1].content)
         if not response_text.strip():
             raise RuntimeError("Model returned an empty response")

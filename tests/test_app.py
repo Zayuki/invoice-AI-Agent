@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import date
@@ -9,12 +10,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from invoice_agent import main
 from invoice_agent.agent import AgentReply, AgentService, InvoiceTools
 from invoice_agent.config import Settings
 from invoice_agent.domain import InvoiceDraft, InvoiceItem
-from invoice_agent.main import Services, UpdateWorker, create_app
+from invoice_agent.main import Services, UpdateWorker, WorkerPool, create_app
 from invoice_agent.rendering import PdfRenderer
 from invoice_agent.store import Store
+from invoice_agent.telegram import TelegramAPIError
 
 
 class PassiveWorker:
@@ -27,7 +30,7 @@ class PassiveWorker:
     async def stop(self) -> None:
         return None
 
-    def wake(self) -> None:
+    def wake(self, chat_id: int) -> None:
         self.wake_count += 1
 
 
@@ -83,6 +86,67 @@ class FakeAgent:
     async def reply(self, text: str, progress: Any = None) -> AgentReply:
         return self.reply_value
 
+    async def clear_thread(self) -> None:
+        return None
+
+
+@dataclass
+class FailingClearThreadAgent:
+    reply_value: AgentReply
+
+    async def reply(self, text: str, progress: Any = None) -> AgentReply:
+        return self.reply_value
+
+    async def clear_thread(self) -> None:
+        raise RuntimeError("checkpoint db error")
+
+
+class BlockedAgent:
+    def __init__(self) -> None:
+        self.release = asyncio.Event()
+
+    async def reply(self, text: str, progress: Any = None) -> AgentReply:
+        await self.release.wait()
+        return AgentReply("Slow reply")
+
+
+class FlakyAgent:
+    def __init__(self, failures: int, reply: AgentReply) -> None:
+        self.failures = failures
+        self.reply_value = reply
+
+    async def reply(self, text: str, progress: Any = None) -> AgentReply:
+        if self.failures > 0:
+            self.failures -= 1
+            raise TimeoutError
+        return self.reply_value
+
+
+class FailingDocumentTelegram(FakeTelegram):
+    def __init__(self, failures: int) -> None:
+        super().__init__()
+        self.failures = failures
+
+    async def send_document(
+        self,
+        chat_id: int,
+        path: Path,
+        caption: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
+        if self.failures > 0:
+            self.failures -= 1
+            raise TelegramAPIError("boom")
+        await super().send_document(chat_id, path, caption, reply_markup)
+
+
+async def wait_for_message(telegram: FakeTelegram, text: str) -> None:
+    for _ in range(200):
+        if any(message == text for message, _ in telegram.messages):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"{text!r} never arrived")
+
 
 class FakeCheckpointer:
     def __init__(self) -> None:
@@ -133,7 +197,7 @@ def app_context(tmp_path: Path):
     services = Services(
         store=store,
         telegram=FakeTelegram(),
-        agent=FakeAgent(AgentReply("Reply")),
+        agents={123: FakeAgent(AgentReply("Reply"))},
         worker=worker,
     )
     app = create_app(settings, services)
@@ -189,13 +253,9 @@ async def test_worker_logs_update_without_invoice_text(
     store = Store(tmp_path / "invoice.db")
     store.initialize(123)
     telegram = FakeTelegram()
-    worker = UpdateWorker(
-        store,
-        telegram,
-        {123: FakeAgent(AgentReply("Reply"))},
-    )
+    worker = UpdateWorker(store, telegram, 123, FakeAgent(AgentReply("Reply")))
     update = message_update(10, 123, "Private invoice details")
-    store.enqueue_update(10, update)
+    store.enqueue_update(10, 123, update)
     caplog.set_level(logging.INFO, logger="invoice_agent.main")
 
     await worker.process_pending()
@@ -214,7 +274,7 @@ async def test_worker_sends_preview_with_buttons(tmp_path: Path) -> None:
     pdf_path.write_bytes(b"preview")
     telegram = FakeTelegram()
     agent = FakeAgent(AgentReply("Ready", pdf_path, 4, 2))
-    worker = UpdateWorker(store, telegram, {123: agent})
+    worker = UpdateWorker(store, telegram, 123, agent)
 
     await worker.process_message(message_update(4, 123))
 
@@ -238,7 +298,7 @@ async def test_reset_starts_fresh_conversation(tmp_path: Path) -> None:
     graph = ResetGraph()
     tools = InvoiceTools(store, PdfRenderer(), settings.output_dir, 123)
     agent = AgentService(graph, tools, "123")
-    worker = UpdateWorker(store, telegram, {123: agent})
+    worker = UpdateWorker(store, telegram, 123, agent)
 
     await worker.process_message(message_update(5, 123, "  /RESET  "))
 
@@ -271,11 +331,7 @@ async def test_current_preview_is_approved_and_returned(tmp_path: Path) -> None:
         sha256(pdf_path.read_bytes()).hexdigest(),
     )
     telegram = FakeTelegram()
-    worker = UpdateWorker(
-        store,
-        telegram,
-        {123: FakeAgent(AgentReply("unused"))},
-    )
+    worker = UpdateWorker(store, telegram, 123, FakeAgent(AgentReply("unused")))
     update = {
         "update_id": 8,
         "callback_query": {
@@ -292,14 +348,54 @@ async def test_current_preview_is_approved_and_returned(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_approval_clears_conversation_thread(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    store = Store(settings.database_path)
+    store.initialize(123)
+    draft = store.save_draft(
+        123,
+        InvoiceDraft(
+            invoice_number="IV-2026-0001",
+            issue_date=date(2026, 8, 12),
+            items=(InvoiceItem("Hosting", 1, Decimal(100)),),
+        ),
+    )
+    pdf_path = tmp_path / "preview.pdf"
+    pdf_path.write_bytes(b"exact preview")
+    preview = store.save_preview(
+        123,
+        draft.id,
+        draft.version,
+        pdf_path,
+        sha256(pdf_path.read_bytes()).hexdigest(),
+    )
+    telegram = FakeTelegram()
+    graph = ResetGraph()
+    tools = InvoiceTools(store, PdfRenderer(), settings.output_dir, 123)
+    agent = AgentService(graph, tools, "123")
+    worker = UpdateWorker(store, telegram, 123, agent)
+    update = {
+        "update_id": 30,
+        "callback_query": {
+            "id": "callback-3",
+            "data": f"approve:{preview.id}:{preview.version}",
+            "message": {"chat": {"id": 123}},
+        },
+    }
+
+    await worker.process_callback(update)
+
+    assert telegram.documents == [pdf_path]
+    assert graph.checkpointer.deleted_threads == ["123"]
+
+
+@pytest.mark.asyncio
 async def test_worker_routes_reply_to_source_chat(tmp_path: Path) -> None:
     store = Store(tmp_path / "invoice.db")
     store.initialize(123)
     telegram = FakeTelegram()
     worker = UpdateWorker(
-        store,
-        telegram,
-        {456: FakeAgent(AgentReply("Second chat reply"))},
+        store, telegram, 456, FakeAgent(AgentReply("Second chat reply"))
     )
 
     await worker.process_message(message_update(9, 456))
@@ -334,11 +430,7 @@ async def test_chat_cannot_approve_another_chats_preview(tmp_path: Path) -> None
         sha256(pdf_path.read_bytes()).hexdigest(),
     )
     telegram = FakeTelegram()
-    worker = UpdateWorker(
-        store,
-        telegram,
-        {456: FakeAgent(AgentReply("unused"))},
-    )
+    worker = UpdateWorker(store, telegram, 456, FakeAgent(AgentReply("unused")))
     update = {
         "callback_query": {
             "id": "callback-2",
@@ -351,3 +443,179 @@ async def test_chat_cannot_approve_another_chats_preview(tmp_path: Path) -> None
 
     assert telegram.documents == []
     assert telegram.callbacks == [("callback-2", "This action is outdated.")]
+
+
+@pytest.mark.asyncio
+async def test_slow_chat_does_not_block_other_chat(tmp_path: Path) -> None:
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    blocked = BlockedAgent()
+    pool = WorkerPool(
+        {
+            123: UpdateWorker(store, telegram, 123, blocked),
+            456: UpdateWorker(
+                store, telegram, 456, FakeAgent(AgentReply("Fast reply"))
+            ),
+        }
+    )
+    store.enqueue_update(11, 123, message_update(11, 123))
+    store.enqueue_update(12, 456, message_update(12, 456))
+    await pool.start()
+    pool.wake(123)
+    pool.wake(456)
+    try:
+        await wait_for_message(telegram, "Fast reply")
+        assert not any(message == "Slow reply" for message, _ in telegram.messages)
+        blocked.release.set()
+        await wait_for_message(telegram, "Slow reply")
+    finally:
+        await pool.stop()
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_retries_then_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "RETRY_DELAY_SECONDS", 0)
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    worker = UpdateWorker(store, telegram, 123, FlakyAgent(1, AgentReply("Recovered")))
+    store.enqueue_update(20, 123, message_update(20, 123))
+
+    await worker.process_pending()
+
+    assert store.get_inbox(20).status == "done"
+    assert ("Recovered", None) in telegram.messages
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_gives_up_after_max_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "RETRY_DELAY_SECONDS", 0)
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    worker = UpdateWorker(store, telegram, 123, FlakyAgent(5, AgentReply("unused")))
+    store.enqueue_update(21, 123, message_update(21, 123))
+
+    await worker.process_pending()
+
+    failed = store.get_inbox(21)
+    assert failed.status == "failed"
+    assert failed.error == "TimeoutError"
+    assert failed.attempts == 2
+    retry_texts = [text for text, markup in telegram.messages if markup]
+    assert retry_texts == ["Something went wrong. Try again?"]
+
+
+@pytest.mark.asyncio
+async def test_transient_failure_retry_does_not_show_stale_failure_banner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(main, "RETRY_DELAY_SECONDS", 0)
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    worker = UpdateWorker(store, telegram, 123, FlakyAgent(1, AgentReply("Recovered")))
+    store.enqueue_update(22, 123, message_update(22, 123))
+
+    await worker.process_pending()
+
+    assert store.get_inbox(22).status == "done"
+    assert not any(text == "⚠️ Could not finish." for _, text in telegram.edits)
+    assert telegram.edits[-1][1] == "✅ Done."
+
+
+@pytest.mark.asyncio
+async def test_callback_transient_failure_is_not_auto_retried(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    store = Store(settings.database_path)
+    store.initialize(123)
+    draft = store.save_draft(
+        123,
+        InvoiceDraft(
+            invoice_number="IV-2026-0001",
+            issue_date=date(2026, 8, 12),
+            items=(InvoiceItem("Hosting", 1, Decimal(100)),),
+        ),
+    )
+    pdf_path = tmp_path / "preview.pdf"
+    pdf_path.write_bytes(b"exact preview")
+    preview = store.save_preview(
+        123,
+        draft.id,
+        draft.version,
+        pdf_path,
+        sha256(pdf_path.read_bytes()).hexdigest(),
+    )
+    telegram = FailingDocumentTelegram(failures=1)
+    worker = UpdateWorker(store, telegram, 123, FakeAgent(AgentReply("unused")))
+    update_id = 40
+    store.enqueue_update(
+        update_id,
+        123,
+        {
+            "update_id": update_id,
+            "callback_query": {
+                "id": "callback-4",
+                "data": f"approve:{preview.id}:{preview.version}",
+                "message": {"chat": {"id": 123}},
+            },
+        },
+    )
+
+    await worker.process_pending()
+
+    failed = store.get_inbox(update_id)
+    assert failed.status == "failed"
+    assert failed.attempts == 1
+    retry_texts = [text for text, markup in telegram.messages if markup]
+    assert retry_texts == ["Something went wrong. Try again?"]
+
+
+@pytest.mark.asyncio
+async def test_clear_thread_failure_does_not_fail_approval(tmp_path: Path) -> None:
+    settings = make_settings(tmp_path)
+    store = Store(settings.database_path)
+    store.initialize(123)
+    draft = store.save_draft(
+        123,
+        InvoiceDraft(
+            invoice_number="IV-2026-0001",
+            issue_date=date(2026, 8, 12),
+            items=(InvoiceItem("Hosting", 1, Decimal(100)),),
+        ),
+    )
+    pdf_path = tmp_path / "preview.pdf"
+    pdf_path.write_bytes(b"exact preview")
+    preview = store.save_preview(
+        123,
+        draft.id,
+        draft.version,
+        pdf_path,
+        sha256(pdf_path.read_bytes()).hexdigest(),
+    )
+    telegram = FakeTelegram()
+    worker = UpdateWorker(
+        store, telegram, 123, FailingClearThreadAgent(AgentReply("unused"))
+    )
+    update = {
+        "update_id": 41,
+        "callback_query": {
+            "id": "callback-5",
+            "data": f"approve:{preview.id}:{preview.version}",
+            "message": {"chat": {"id": 123}},
+        },
+    }
+
+    await worker.process_callback(update)
+
+    assert telegram.documents == [pdf_path]
+    assert telegram.callbacks == [("callback-5", "Approved")]
+    assert not any(markup for _, markup in telegram.messages)

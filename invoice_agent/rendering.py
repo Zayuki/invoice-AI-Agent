@@ -9,7 +9,12 @@ from jinja2 import Environment
 from playwright.async_api import async_playwright
 from pypdf import PdfReader
 
-from invoice_agent.domain import InvoiceDraft, InvoiceItem, calculate_totals
+from invoice_agent.domain import (
+    SERVICE_HEADINGS,
+    InvoiceDraft,
+    InvoiceItem,
+    calculate_totals,
+)
 
 SOURCE_TEMPLATE = Path(__file__).parent.parent / "invoice_template.html"
 FIXED_FIELDS = (
@@ -192,15 +197,15 @@ def template_values(draft: InvoiceDraft) -> dict[str, str | int]:
             if draft.table_count is not None
             else f"{draft.event_style} (Around {draft.pax_count} pax)"
         ),
-        "item_A_desc": "Professional Emcee Hosting" if primary else "",
+        "item_A_desc": SERVICE_HEADINGS["primary"] if primary else "",
         "item_A_qty": primary.quantity if primary else "",
         "item_A_amount": format_money(primary),
-        "item_B_desc": "ROM Hosting (Before Dinner Start)" if rom else "",
+        "item_B_desc": SERVICE_HEADINGS["rom"] if rom else "",
         "item_B_amount": format_money(rom),
-        "item_D_desc": "Floor Manager" if floor_manager else "",
+        "item_D_desc": SERVICE_HEADINGS["floor_manager"] if floor_manager else "",
         "item_D_qty": floor_manager.quantity if floor_manager else "",
         "item_D_amount": format_money(floor_manager),
-        "item_E_desc": "Wedding DJ Services" if dj else "",
+        "item_E_desc": SERVICE_HEADINGS["dj"] if dj else "",
         "item_E_qty": dj.quantity if dj else "",
         "item_E_amount": format_money(dj),
         "total_amount": f"{totals.total:.2f}",

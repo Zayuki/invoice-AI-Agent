@@ -8,23 +8,34 @@ from functools import partial
 from time import monotonic
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from invoice_agent.agent import AgentService, InvoiceTools, ToolProgress, build_agent
+from invoice_agent.agent import (
+    INITIAL_STATUS,
+    AgentService,
+    InvoiceTools,
+    ToolProgress,
+    build_agent,
+)
 from invoice_agent.config import Settings
 from invoice_agent.rendering import PdfRenderer
-from invoice_agent.store import StalePreviewError, Store
-from invoice_agent.telegram import TelegramClient, WorkIndicator
+from invoice_agent.store import InboxUpdate, StalePreviewError, Store, payload_chat_id
+from invoice_agent.telegram import TelegramAPIError, TelegramClient, WorkIndicator
 
 LOGGER = logging.getLogger(__name__)
+
+MAX_ATTEMPTS = 2
+RETRY_DELAY_SECONDS = 2.0
+TRANSIENT_ERRORS = (TimeoutError, httpx.HTTPError, TelegramAPIError)
 
 
 @dataclass
 class Services:
     store: Store
     telegram: Any
-    agent: Any
+    agents: dict[int, Any]
     worker: Any
 
 
@@ -33,11 +44,13 @@ class UpdateWorker:
         self,
         store: Store,
         telegram: Any,
-        agents: dict[int, Any],
+        chat_id: int,
+        agent: Any,
     ) -> None:
         self.store = store
         self.telegram = telegram
-        self.agents = agents
+        self.chat_id = chat_id
+        self.agent = agent
         self.signal = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
 
@@ -65,17 +78,17 @@ class UpdateWorker:
             await self.process_pending()
 
     async def process_pending(self) -> None:
-        while update := self.store.claim_next_update():
+        while update := self.store.claim_next_update(self.chat_id):
             started = monotonic()
-            chat_id = owner_chat_id(update.payload)
             update_kind = (
                 "callback" if "callback_query" in update.payload else "message"
             )
             LOGGER.info(
-                "Processing Telegram update update_id=%s chat_id=%s kind=%s",
+                "Processing Telegram update update_id=%s chat_id=%s kind=%s attempt=%s",
                 update.update_id,
-                chat_id,
+                self.chat_id,
                 update_kind,
+                update.attempts,
             )
             try:
                 await self.process_update(update.payload)
@@ -85,21 +98,39 @@ class UpdateWorker:
                     update.update_id,
                     (monotonic() - started) * 1000,
                 )
-            except Exception as error:
-                LOGGER.exception(
-                    "Telegram update failed update_id=%s chat_id=%s duration_ms=%.0f",
-                    update.update_id,
-                    chat_id,
-                    (monotonic() - started) * 1000,
-                )
-                self.store.fail_update(update.update_id, type(error).__name__)
-                with suppress(Exception):
-                    if chat_id is not None:
-                        await self.telegram.send_message(
-                            chat_id,
-                            "Something went wrong. Try again?",
-                            retry_keyboard(update.update_id),
-                        )
+            except TRANSIENT_ERRORS as error:
+                if update_kind == "message" and update.attempts < MAX_ATTEMPTS:
+                    LOGGER.warning(
+                        "Retrying Telegram update update_id=%s after %s",
+                        update.update_id,
+                        type(error).__name__,
+                    )
+                    self.store.retry_update(update.update_id)
+                    await asyncio.sleep(RETRY_DELAY_SECONDS * update.attempts)
+                    continue
+                await self.report_failure(update, error, started)
+            except Exception as error:  # noqa: BLE001
+                await self.report_failure(update, error, started)
+
+    async def report_failure(
+        self,
+        update: InboxUpdate,
+        error: Exception,
+        started: float,
+    ) -> None:
+        LOGGER.exception(
+            "Telegram update failed update_id=%s chat_id=%s duration_ms=%.0f",
+            update.update_id,
+            self.chat_id,
+            (monotonic() - started) * 1000,
+        )
+        self.store.fail_update(update.update_id, type(error).__name__)
+        with suppress(Exception):
+            await self.telegram.send_message(
+                self.chat_id,
+                "Something went wrong. Try again?",
+                retry_keyboard(update.update_id),
+            )
 
     async def process_update(self, update: dict[str, Any]) -> None:
         if "callback_query" in update:
@@ -108,10 +139,8 @@ class UpdateWorker:
         await self.process_message(update)
 
     async def process_message(self, update: dict[str, Any]) -> None:
-        chat_id = owner_chat_id(update)
-        if chat_id is None:
-            raise ValueError("Missing chat ID")
-        agent = self.agents[chat_id]
+        chat_id = self.chat_id
+        agent = self.agent
         text = update.get("message", {}).get("text")
         if not text:
             await self.telegram.send_message(
@@ -127,7 +156,7 @@ class UpdateWorker:
             )
             return
         indicator = WorkIndicator(self.telegram, chat_id)
-        status = "🔍 Reading your invoice…"
+        status = INITIAL_STATUS
         message = await self.telegram.send_message(chat_id, status)
         progress = ToolProgress(
             partial(self.telegram.edit_message, chat_id, message["message_id"]),
@@ -149,23 +178,18 @@ class UpdateWorker:
                 return
             await progress.set_status("✅ Done.")
             await self.telegram.send_message(chat_id, reply.text)
-        except Exception:
-            await progress.set_status("⚠️ Could not finish.")
-            raise
         finally:
             await indicator.stop()
 
     async def process_callback(self, update: dict[str, Any]) -> None:
-        chat_id = owner_chat_id(update)
-        if chat_id is None:
-            raise ValueError("Missing chat ID")
+        chat_id = self.chat_id
         callback = update["callback_query"]
         callback_id = callback["id"]
         data = callback.get("data", "")
         try:
             action, identifier, version = parse_callback(data)
             if action == "approve":
-                await self.approve(chat_id, callback_id, identifier, version)
+                await self.approve(callback_id, identifier, version)
             elif action == "edit":
                 self.store.reopen_draft(chat_id, identifier, version)
                 await self.telegram.answer_callback(callback_id, "Editing")
@@ -179,7 +203,7 @@ class UpdateWorker:
                 await self.telegram.send_message(chat_id, "Invoice cancelled.")
             elif action == "retry":
                 failed = self.store.get_inbox(identifier)
-                if failed is None or owner_chat_id(failed.payload) != chat_id:
+                if failed is None or failed.chat_id != self.chat_id:
                     raise KeyError("Update belongs to another chat")
                 self.store.retry_update(identifier)
                 await self.telegram.answer_callback(callback_id, "Retrying")
@@ -191,11 +215,11 @@ class UpdateWorker:
 
     async def approve(
         self,
-        chat_id: int,
         callback_id: str,
         draft_id: int,
         version: int,
     ) -> None:
+        chat_id = self.chat_id
         path = self.store.approve_preview(chat_id, draft_id, version)
         await self.telegram.answer_callback(callback_id, "Approved")
         indicator = WorkIndicator(self.telegram, chat_id)
@@ -206,6 +230,8 @@ class UpdateWorker:
                 path,
                 "Approved invoice. Forward it manually to your customer.",
             )
+            with suppress(Exception):
+                await self.agent.clear_thread()
         finally:
             await indicator.stop()
 
@@ -245,12 +271,22 @@ def retry_keyboard(update_id: int) -> dict[str, Any]:
     }
 
 
-def owner_chat_id(update: dict[str, Any]) -> int | None:
-    if "message" in update:
-        return update["message"].get("chat", {}).get("id")
-    if "callback_query" in update:
-        return update["callback_query"].get("message", {}).get("chat", {}).get("id")
-    return None
+class WorkerPool:
+    def __init__(self, workers: dict[int, UpdateWorker]) -> None:
+        self.workers = workers
+
+    async def start(self) -> None:
+        for worker in self.workers.values():
+            await worker.start()
+
+    async def stop(self) -> None:
+        for worker in self.workers.values():
+            await worker.stop()
+
+    def wake(self, chat_id: int) -> None:
+        worker = self.workers.get(chat_id)
+        if worker is not None:
+            worker.wake()
 
 
 async def build_services(settings: Settings, stack: Any) -> Services:
@@ -262,16 +298,17 @@ async def build_services(settings: Settings, stack: Any) -> Services:
         AsyncSqliteSaver.from_conn_string(str(checkpoint_path))
     )
     await checkpointer.setup()
-    agents = {}
+    telegram = TelegramClient(settings.telegram_bot_token)
+    stack.push_async_callback(telegram.close)
     renderer = PdfRenderer()
+    agents: dict[int, AgentService] = {}
+    workers: dict[int, UpdateWorker] = {}
     for chat_id in settings.telegram_allowed_chat_ids:
         invoice_tools = InvoiceTools(store, renderer, settings.output_dir, chat_id)
         graph = build_agent(settings, invoice_tools, checkpointer)
         agents[chat_id] = AgentService(graph, invoice_tools, str(chat_id))
-    telegram = TelegramClient(settings.telegram_bot_token)
-    stack.push_async_callback(telegram.close)
-    worker = UpdateWorker(store, telegram, agents)
-    return Services(store, telegram, agents, worker)
+        workers[chat_id] = UpdateWorker(store, telegram, chat_id, agents[chat_id])
+    return Services(store, telegram, agents, WorkerPool(workers))
 
 
 @asynccontextmanager
@@ -301,17 +338,17 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=403)
     update = await request.json()
     update_id = update.get("update_id")
-    chat_id = owner_chat_id(update)
+    chat_id = payload_chat_id(update)
     if chat_id not in settings.telegram_allowed_chat_ids:
         LOGGER.info("Ignored Telegram update update_id=%s", update_id)
         return {"ok": True}
     if not isinstance(update_id, int):
         LOGGER.warning("Rejected Telegram webhook with invalid update ID")
         raise HTTPException(status_code=400, detail="Invalid update")
-    inserted = request.app.state.store.enqueue_update(update_id, update)
+    inserted = request.app.state.store.enqueue_update(update_id, chat_id, update)
     if inserted:
         LOGGER.info("Queued Telegram update update_id=%s", update_id)
-        request.app.state.worker.wake()
+        request.app.state.worker.wake(chat_id)
     else:
         LOGGER.info("Ignored duplicate Telegram update update_id=%s", update_id)
     return {"ok": True}
