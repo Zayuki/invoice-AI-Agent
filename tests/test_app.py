@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -118,7 +119,7 @@ class FlakyAgent:
     async def reply(self, text: str, progress: Any = None) -> AgentReply:
         if self.failures > 0:
             self.failures -= 1
-            raise TimeoutError
+            raise httpx.ConnectError("boom")
         return self.reply_value
 
 
@@ -491,6 +492,27 @@ async def test_transient_failure_retries_then_succeeds(
     assert ("Recovered", None) in telegram.messages
 
 
+class TimingOutAgent:
+    async def reply(self, text: str, progress: Any = None) -> AgentReply:
+        raise TimeoutError
+
+
+@pytest.mark.asyncio
+async def test_agent_timeout_fails_without_retry(tmp_path: Path) -> None:
+    store = Store(tmp_path / "invoice.db")
+    store.initialize(123)
+    telegram = FakeTelegram()
+    worker = UpdateWorker(store, telegram, 123, TimingOutAgent())
+    store.enqueue_update(22, 123, message_update(22, 123))
+
+    await worker.process_pending()
+
+    failed = store.get_inbox(22)
+    assert failed.status == "failed"
+    assert failed.error == "TimeoutError"
+    assert failed.attempts == 1
+
+
 @pytest.mark.asyncio
 async def test_transient_failure_gives_up_after_max_attempts(
     tmp_path: Path,
@@ -507,7 +529,7 @@ async def test_transient_failure_gives_up_after_max_attempts(
 
     failed = store.get_inbox(21)
     assert failed.status == "failed"
-    assert failed.error == "TimeoutError"
+    assert failed.error == "ConnectError"
     assert failed.attempts == 2
     retry_texts = [text for text, markup in telegram.messages if markup]
     assert retry_texts == ["Something went wrong. Try again?"]

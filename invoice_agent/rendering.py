@@ -1,3 +1,4 @@
+import asyncio
 import re
 from dataclasses import dataclass
 from hashlib import sha256
@@ -6,7 +7,7 @@ from pathlib import Path
 from time import strftime, strptime
 
 from jinja2 import Environment
-from playwright.async_api import async_playwright
+from playwright.async_api import Browser, Playwright, async_playwright
 from pypdf import PdfReader
 
 from invoice_agent.domain import (
@@ -274,15 +275,35 @@ def render_html(draft: InvoiceDraft) -> str:
 
 
 class PdfRenderer:
+    def __init__(self) -> None:
+        self.playwright: Playwright | None = None
+        self.browser: Browser | None = None
+        self.lock = asyncio.Lock()
+
+    async def start(self) -> Browser:
+        async with self.lock:
+            if self.browser is None:
+                self.playwright = await async_playwright().start()
+                self.browser = await self.playwright.chromium.launch()
+            return self.browser
+
+    async def close(self) -> None:
+        if self.browser is not None:
+            await self.browser.close()
+            self.browser = None
+        if self.playwright is not None:
+            await self.playwright.stop()
+            self.playwright = None
+
     async def render(
         self,
         draft: InvoiceDraft,
         destination: Path,
     ) -> RenderedPdf:
         destination.parent.mkdir(parents=True, exist_ok=True)
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch()
-            page = await browser.new_page()
+        browser = await self.start()
+        page = await browser.new_page()
+        try:
             await page.set_content(render_html(draft), wait_until="load")
             await page.emulate_media(media="print")
             await page.pdf(
@@ -292,7 +313,8 @@ class PdfRenderer:
                 prefer_css_page_size=True,
                 scale=0.85,
             )
-            await browser.close()
+        finally:
+            await page.close()
         page_count = len(PdfReader(destination).pages)
         if page_count != 1:
             destination.unlink(missing_ok=True)

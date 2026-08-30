@@ -107,7 +107,7 @@ set -a
 source .env
 set +a
 
-PUBLIC_BASE_URL="https://bot.emceecharrine.com"
+PUBLIC_BASE_URL="https://bot.leexinyang.com"
 
 curl -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
   -H 'Content-Type: application/json' \

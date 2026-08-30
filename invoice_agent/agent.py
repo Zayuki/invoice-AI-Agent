@@ -460,7 +460,7 @@ def build_model(settings: Settings) -> ChatOpenAI:
         base_url=settings.openai_base_url,
         model=settings.openai_model,
         max_completion_tokens=16_384,
-        reasoning_effort="medium",
+        reasoning_effort="low",
         use_responses_api=True,
     )
 

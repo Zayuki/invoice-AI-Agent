@@ -28,7 +28,7 @@ LOGGER = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 2.0
-TRANSIENT_ERRORS = (TimeoutError, httpx.HTTPError, TelegramAPIError)
+TRANSIENT_ERRORS = (httpx.HTTPError, TelegramAPIError)
 
 
 @dataclass
@@ -301,6 +301,7 @@ async def build_services(settings: Settings, stack: Any) -> Services:
     telegram = TelegramClient(settings.telegram_bot_token)
     stack.push_async_callback(telegram.close)
     renderer = PdfRenderer()
+    stack.push_async_callback(renderer.close)
     agents: dict[int, AgentService] = {}
     workers: dict[int, UpdateWorker] = {}
     for chat_id in settings.telegram_allowed_chat_ids:
