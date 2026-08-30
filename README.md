@@ -6,31 +6,29 @@ The bot never contacts customers. You manually forward the approved PDF.
 
 ## Architecture
 
-[![Invoice AI Agent architecture diagram](docs/diagrams/invoice-agent-architecture.visual-check.1440x900.light.png)](docs/diagrams/invoice-agent-architecture.html)
+[![Invoice Agent Deep Agents architecture and runtime flow](docs/diagrams/invoice-deep-agent-architecture.visual-check.1440x900.light.png)](docs/diagrams/invoice-deep-agent-architecture.html)
 
-[Open the interactive architecture diagram](docs/diagrams/invoice-agent-architecture.html)
+[Open the interactive diagram](docs/diagrams/invoice-deep-agent-architecture.html) to switch themes, zoom, search, focus components, trace relationships, or export the view. The checked source specification is also available at [`docs/diagrams/invoice-deep-agent-architecture.json`](docs/diagrams/invoice-deep-agent-architecture.json).
 
-```mermaid
-flowchart TD
-    Owner[Invoice owner] -->|Invoice details and actions| Telegram[Telegram Bot API]
-    Telegram -->|HTTPS webhook| API[FastAPI application]
-    API -->|Validate secret and allowlist| Inbox[(SQLite inbox)]
-    Inbox --> Worker[Async update worker]
-    Worker --> Agent[LangGraph Deep Agent]
-    Agent -->|Structured tool calls| Domain[Invoice validation and totals]
-    Agent -->|Codex model request| OpenAI[OpenAI-compatible API]
-    Agent <--> Drafts[(SQLite drafts and checkpoints)]
-    Agent --> Renderer[Jinja2 HTML template]
-    Renderer --> Browser[Playwright Chromium]
-    Browser -->|One-page PDF| Files[(Generated PDF files)]
-    Worker -->|Preview with Approve, Edit, Cancel| Telegram
-    Telegram -->|Owner callback| API
-    Worker -->|Approved reviewed PDF| Telegram
-    Telegram --> Owner
-    Owner -.->|Manual forwarding only| Customer[Customer]
-```
+### Runtime flow
 
-Telegram delivers messages and button callbacks to the FastAPI webhook. The webhook authenticates the request, filters non-allowlisted chats, persists each update, and returns quickly. A background worker processes the durable inbox, invokes the agent, stores versioned drafts, and renders a PDF only after validation succeeds. Approval is bound to the reviewed draft version and file digest; the bot returns that exact PDF to the owner, never directly to the customer.
+1. The owner sends invoice facts or a button action through Telegram.
+2. Telegram posts the update to `POST /telegram/webhook` with the webhook secret.
+3. FastAPI compares the secret, checks the chat allowlist, deduplicates the Telegram `update_id`, writes the update to the SQLite inbox, wakes the worker, and returns immediately.
+4. The async worker atomically claims the next queued update and dispatches a message or callback path. Failed updates remain retryable.
+5. For a text message, `AgentService` invokes the LangGraph Deep Agent with the owner chat ID as the checkpoint `thread_id`.
+6. The Deep Agent sends the system prompt, conversation messages, and tool schemas to the configured Codex model through `ChatOpenAI` and the Responses API.
+7. The model can call only the invoice tools: `get_draft`, `update_draft`, `validate_draft`, `prepare_pdf`, and `discard_draft`. General-purpose subagents and filesystem, shell, task, search, and todo tools are disabled.
+8. Tool inputs cross a Pydantic boundary. Domain code enforces required fields, allowed event values, one table-or-pax size, and `Decimal` money totals without trusting model prose.
+9. The agent reads the current draft before mutation, validates after each update, then either asks one short missing-field question or calls `prepare_pdf`. Draft versions live in SQLite while conversation state is checkpointed by LangGraph.
+10. A valid draft is rendered through Jinja2, Playwright Chromium, and pypdf. Rendering fails unless the result is exactly one A4 page; the saved preview records its SHA-256 digest and draft version.
+11. Telegram returns the preview with `Approve`, `Edit`, and `Cancel`. Approval succeeds only when the chat, draft status, version, file path, and current file digest still match the reviewed preview. The exact bytes return to the owner for manual forwarding; the bot never contacts the customer.
+
+### Deep Agent control loop
+
+The system prompt defines the conversational policy: preserve supplied names, translate reception and service details to English, never invent facts or prices, use tools for every draft operation, and ask exactly one short clarifying question at a time. `ToolProgress` maps each structured call to a short Telegram status so the owner can see whether the agent is reading, updating, validating, generating, or cancelling.
+
+The model decides which allowed tool to call, while deterministic application code owns state transitions, validation, totals, file generation, and approval. This keeps language understanding probabilistic but invoice and approval correctness enforceable.
 
 ## Tech Stack
 
@@ -151,40 +149,3 @@ When the draft is complete, the bot sends a PDF with these actions:
 .venv/bin/ruff format --check invoice_agent tests
 .venv/bin/python -m compileall -q invoice_agent tests
 ```
-
-## Architecture
-
-```mermaid
-flowchart TD
-    Owner[Invoice owner] -->|Invoice details and actions| Telegram[Telegram Bot API]
-    Telegram -->|HTTPS webhook| API[FastAPI application]
-    API -->|Validate secret and allowlist| Inbox[(SQLite inbox)]
-    Inbox --> Worker[Async update worker]
-    Worker --> Agent[LangGraph Deep Agent]
-    Agent -->|Structured tool calls| Domain[Invoice validation and totals]
-    Agent -->|Codex model request| OpenAI[OpenAI-compatible API]
-    Agent <--> Drafts[(SQLite drafts and checkpoints)]
-    Agent --> Renderer[Jinja2 HTML template]
-    Renderer --> Browser[Playwright Chromium]
-    Browser -->|One-page PDF| Files[(Generated PDF files)]
-    Worker -->|Preview with Approve, Edit, Cancel| Telegram
-    Telegram -->|Owner callback| API
-    Worker -->|Approved reviewed PDF| Telegram
-    Telegram --> Owner
-    Owner -.->|Manual forwarding only| Customer[Customer]
-```
-
-Telegram delivers messages and button callbacks to the FastAPI webhook. The webhook authenticates the request, filters non-allowlisted chats, persists each update, and returns quickly. A background worker processes the durable inbox, invokes the agent, stores versioned drafts, and renders a PDF only after validation succeeds. Approval is bound to the reviewed draft version and file digest; the bot returns that exact PDF to the owner, never directly to the customer.
-
-## Tech Stack
-
-- **Runtime:** Python 3.12 with asyncio
-- **API:** FastAPI served by Uvicorn
-- **Bot integration:** Telegram Bot API over HTTPS webhooks, called with HTTPX
-- **LLM orchestration:** Deep Agents and LangGraph with LangChain OpenAI
-- **Model:** configurable Codex model through an OpenAI-compatible Responses API endpoint
-- **Validation and data modeling:** Pydantic 2, dataclasses, and `Decimal` money calculations
-- **Persistence:** SQLite for the update inbox and invoice drafts; LangGraph SQLite checkpoints for conversation state
-- **PDF generation:** Jinja2 HTML templating, Playwright with Chromium, and pypdf verification
-- **Webhook tunnel:** Cloudflare Tunnel (cloudflared)
-- **Quality:** pytest, pytest-asyncio, and Ruff

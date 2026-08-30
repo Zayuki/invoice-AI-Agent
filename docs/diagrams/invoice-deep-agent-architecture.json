@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Invoice Agent — Deep Agents Architecture & Runtime Flow",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1000, 560]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [55, 70],
+    "cols": 4,
+    "gapX": 60,
+    "gapY": 70,
+    "cellW": 180,
+    "cellH": 110
+  },
+  "components": [
+    {
+      "id": "owner",
+      "type": "frontend",
+      "label": "Invoice Owner",
+      "sublabel": "Chat · review · approval",
+      "row": 0,
+      "col": 0,
+      "size": [180, 80]
+    },
+    {
+      "id": "telegram",
+      "type": "external",
+      "label": "Telegram Bot API",
+      "sublabel": "Messages · callbacks · files",
+      "brand": "telegram",
+      "row": 0,
+      "col": 1,
+      "size": [180, 80]
+    },
+    {
+      "id": "webhook",
+      "type": "security",
+      "label": "FastAPI Webhook",
+      "sublabel": "Secret · allowlist · fast ACK",
+      "row": 0,
+      "col": 2,
+      "size": [180, 80]
+    },
+    {
+      "id": "inbox",
+      "type": "database",
+      "label": "Durable Update Inbox",
+      "sublabel": "SQLite · durable · deduplicated",
+      "row": 0,
+      "col": 3,
+      "size": [180, 80]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Async Update Worker",
+      "sublabel": "Claims and dispatches updates",
+      "row": 1,
+      "col": 3,
+      "size": [180, 80]
+    },
+    {
+      "id": "deepagent",
+      "type": "backend",
+      "label": "LangGraph Deep Agent",
+      "sublabel": "Prompt · graph · checkpoints",
+      "tag": "deepagents.create_deep_agent",
+      "row": 1,
+      "col": 2,
+      "size": [180, 80]
+    },
+    {
+      "id": "codex",
+      "type": "cloud",
+      "label": "Codex Chat Model",
+      "sublabel": "Responses API · tool choice",
+      "brand": "openai",
+      "row": 2,
+      "col": 2,
+      "size": [180, 80]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "Invoice Tool Boundary",
+      "sublabel": "get · update · validate · PDF · discard",
+      "row": 1,
+      "col": 1,
+      "size": [180, 80]
+    },
+    {
+      "id": "state",
+      "type": "database",
+      "label": "Drafts & Checkpoints",
+      "sublabel": "Draft versions · digest · thread state",
+      "row": 2,
+      "col": 3,
+      "size": [180, 80]
+    },
+    {
+      "id": "domain",
+      "type": "backend",
+      "label": "Domain Validation",
+      "sublabel": "Pydantic · Decimal · required fields",
+      "row": 1,
+      "col": 0,
+      "size": [180, 80]
+    },
+    {
+      "id": "renderer",
+      "type": "backend",
+      "label": "One-page PDF Pipeline",
+      "sublabel": "Jinja2 → Chromium → pypdf",
+      "row": 2,
+      "col": 1,
+      "size": [180, 80]
+    },
+    {
+      "id": "artifact",
+      "type": "database",
+      "label": "Digest-bound PDF",
+      "sublabel": "A4 file · SHA-256 · approved bytes",
+      "row": 2,
+      "col": 0,
+      "size": [180, 80]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "security-group",
+      "label": "Authenticated Telegram ingress",
+      "wraps": ["webhook", "inbox"],
+      "pad": 22
+    },
+    {
+      "kind": "region",
+      "label": "Invoice Agent process",
+      "wraps": ["worker", "deepagent", "tools", "domain", "renderer"],
+      "pad": 26
+    }
+  ],
+  "connections": [
+    {
+      "id": "owner_message",
+      "from": "owner",
+      "to": "telegram",
+      "label": "1 · input"
+    },
+    {
+      "id": "telegram_webhook",
+      "from": "telegram",
+      "to": "webhook",
+      "label": "2 · HTTPS"
+    },
+    {
+      "id": "webhook_enqueue",
+      "from": "webhook",
+      "to": "inbox",
+      "label": "3 · enqueue",
+      "labelDy": 24
+    },
+    {
+      "id": "inbox_claim",
+      "from": "inbox",
+      "to": "worker",
+      "label": "4 · claim",
+      "labelDy": 24
+    },
+    {
+      "id": "worker_invoke",
+      "from": "worker",
+      "to": "deepagent",
+      "label": "5 · invoke"
+    },
+    {
+      "id": "agent_model",
+      "from": "deepagent",
+      "to": "codex",
+      "label": "6 · infer",
+      "labelDy": 24
+    },
+    {
+      "id": "model_tools",
+      "from": "deepagent",
+      "to": "tools",
+      "label": "7 · tools",
+      "labelDy": 24
+    },
+    {
+      "id": "tools_domain",
+      "from": "tools",
+      "to": "domain",
+      "label": "8 · rules"
+    },
+    {
+      "id": "agent_state",
+      "from": "deepagent",
+      "to": "state",
+      "label": "checkpoint",
+      "variant": "dashed"
+    },
+    {
+      "id": "tools_render",
+      "from": "tools",
+      "to": "renderer",
+      "label": "9 · render",
+      "labelDy": 24
+    },
+    {
+      "id": "render_artifact",
+      "from": "renderer",
+      "to": "artifact",
+      "label": "10 · PDF"
+    },
+    {
+      "id": "artifact_owner",
+      "from": "artifact",
+      "to": "owner",
+      "label": "11 · return",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "left",
+      "via": [[10, 470], [10, 110]]
+    }
+  ]
+}
