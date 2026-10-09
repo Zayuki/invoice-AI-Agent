@@ -139,6 +139,18 @@ def format_money(item: InvoiceItem | None) -> str:
     return f"{item.unit_price:.2f}" if item else ""
 
 
+def format_primary_amount(
+    primary: InvoiceItem | None,
+    outstation: InvoiceItem | None,
+) -> str:
+    if primary is None:
+        return ""
+    amount = primary.unit_price
+    if outstation is not None:
+        amount += outstation.amount
+    return f"{amount:.2f}"
+
+
 def english_names(names: str) -> str:
     names = re.sub(r"[\u3400-\u4dbf\u4e00-\u9fff]+", "", names)
     parts = re.split(
@@ -177,6 +189,7 @@ def format_event_date(value: str) -> str:
 
 def template_values(draft: InvoiceDraft) -> dict[str, str | int]:
     primary = find_item(draft, "primary")
+    outstation = find_item(draft, "outstation")
     rom = find_item(draft, "rom")
     floor_manager = find_item(draft, "floor_manager")
     dj = find_item(draft, "dj")
@@ -200,7 +213,7 @@ def template_values(draft: InvoiceDraft) -> dict[str, str | int]:
         ),
         "item_A_desc": SERVICE_HEADINGS["primary"] if primary else "",
         "item_A_qty": primary.quantity if primary else "",
-        "item_A_amount": format_money(primary),
+        "item_A_amount": format_primary_amount(primary, outstation),
         "item_B_desc": SERVICE_HEADINGS["rom"] if rom else "",
         "item_B_amount": format_money(rom),
         "item_D_desc": SERVICE_HEADINGS["floor_manager"] if floor_manager else "",

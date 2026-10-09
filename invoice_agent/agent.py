@@ -57,7 +57,7 @@ OPTIONAL_KIND_VALUES = get_args(OptionalItemKind)
 
 SYSTEM_PROMPT = f"""You create one wedding invoice for its owner.
 Preserve customer names exactly, including Chinese names.
-Translate all wedding reception details and service descriptions to English before saving them.
+Translate all wedding reception details and service descriptions to English before saving them, except the venue, which must be saved in the language the owner typed it in.
 Never invent facts, selections, quantities, dates, or prices.
 Use invoice tools for every draft read, update, validation, cancellation, and PDF preparation.
 Call get_draft before changing a draft. Call validate_draft after every update.

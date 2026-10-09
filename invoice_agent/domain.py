@@ -130,10 +130,7 @@ def calculate_totals(
     items: Sequence[InvoiceItem],
     booking_fee: Decimal | None = None,
 ) -> InvoiceTotals:
-    total = sum(
-        (item.amount for item in items if item.kind != "outstation"),
-        Decimal("0.00"),
-    )
+    total = sum((item.amount for item in items), Decimal("0.00"))
     total = total.quantize(Decimal("0.01"), ROUND_HALF_UP)
     fee = booking_fee if booking_fee is not None else total / 2
     fee = fee.quantize(Decimal("0.01"), ROUND_HALF_UP)

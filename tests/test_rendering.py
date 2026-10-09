@@ -143,7 +143,7 @@ def test_selected_optional_rows_and_totals_are_rendered() -> None:
     assert ">1154.00<" in html
 
 
-def test_outstation_destination_and_fee_render_separately_from_totals() -> None:
+def test_outstation_fee_is_added_to_hosting_amount() -> None:
     items = (
         InvoiceItem("Professional Emcee Hosting", 1, Decimal("2188.00")),
         InvoiceItem(
@@ -157,12 +157,13 @@ def test_outstation_destination_and_fee_render_separately_from_totals() -> None:
     html = render_html(make_draft(items))
 
     assert "- KL Outstation Accommodation &amp; Transportation (RM 400)" in html
+    assert 'data-field="item_A_amount">2588.00<' in html
     assert (
-        'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">2188.00<'
+        'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">2588.00<'
         in html
     )
-    assert 'data-field="booking_fee">1094.00<' in html
-    assert 'data-field="balance_due">1094.00<' in html
+    assert 'data-field="booking_fee">1294.00<' in html
+    assert 'data-field="balance_due">1294.00<' in html
 
 
 def test_service_headings_ignore_agent_descriptions() -> None:

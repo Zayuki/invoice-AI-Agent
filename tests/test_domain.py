@@ -87,7 +87,7 @@ def test_totals_use_decimal_and_split_odd_cent() -> None:
     assert totals.balance == Decimal("50.50")
 
 
-def test_outstation_fee_is_excluded_from_all_totals() -> None:
+def test_outstation_fee_is_included_in_all_totals() -> None:
     totals = calculate_totals(
         [
             InvoiceItem("Hosting", 1, Decimal("2000.00")),
@@ -101,25 +101,28 @@ def test_outstation_fee_is_excluded_from_all_totals() -> None:
         ]
     )
 
-    assert totals.total == Decimal("2500.00")
-    assert totals.booking_fee == Decimal("1250.00")
-    assert totals.balance == Decimal("1250.00")
+    assert totals.total == Decimal("2900.00")
+    assert totals.booking_fee == Decimal("1450.00")
+    assert totals.balance == Decimal("1450.00")
 
 
-def test_manual_booking_fee_cannot_use_outstation_fee() -> None:
-    with pytest.raises(ValueError, match="cannot exceed total"):
-        calculate_totals(
-            [
-                InvoiceItem("Hosting", 1, Decimal("1000.00")),
-                InvoiceItem(
-                    "KL Outstation Accommodation & Transportation",
-                    1,
-                    Decimal("400.00"),
-                    "outstation",
-                ),
-            ],
-            Decimal("1200.00"),
-        )
+def test_manual_booking_fee_can_use_total_including_outstation_fee() -> None:
+    totals = calculate_totals(
+        [
+            InvoiceItem("Hosting", 1, Decimal("1000.00")),
+            InvoiceItem(
+                "KL Outstation Accommodation & Transportation",
+                1,
+                Decimal("400.00"),
+                "outstation",
+            ),
+        ],
+        Decimal("1400.00"),
+    )
+
+    assert totals.total == Decimal("1400.00")
+    assert totals.booking_fee == Decimal("1400.00")
+    assert totals.balance == Decimal("0.00")
 
 
 def test_manual_booking_fee_keeps_total_and_updates_balance() -> None:
