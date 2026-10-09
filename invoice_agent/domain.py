@@ -57,8 +57,8 @@ class InvoiceDraft:
     venue: str | None = None
     language: str | None = None
     event_style: EventStyle | None = None
-    table_count: int | None = None
-    pax_count: int | None = None
+    table_count: str | None = None
+    pax_count: str | None = None
     booking_fee: Decimal | None = None
     items: Sequence[InvoiceItem] = field(default_factory=tuple)
     id: int | None = None
@@ -91,10 +91,15 @@ REQUIRED_FIELDS = (
     "event_style",
 )
 
+COUNT_PATTERN = re.compile(r"[1-9]\d*(?:\+\+)?")
 LANGUAGE_PATTERN = re.compile(
     r"^(?:Mandarin \(100%\)|English \(100%\)|"
     r"Mandarin \((\d{1,3})%\) & English \((\d{1,3})%\))$"
 )
+
+
+def is_valid_count(value: str | int | None) -> bool:
+    return value is not None and COUNT_PATTERN.fullmatch(str(value)) is not None
 
 
 def is_valid_language(value: str) -> bool:
@@ -107,10 +112,7 @@ def is_valid_language(value: str) -> bool:
 
 def validate_draft(draft: InvoiceDraft) -> DraftValidation:
     missing = [name for name in REQUIRED_FIELDS if not getattr(draft, name)]
-    if not any(
-        count is not None and count > 0
-        for count in (draft.table_count, draft.pax_count)
-    ):
+    if not any(map(is_valid_count, (draft.table_count, draft.pax_count))):
         missing.append("table_count")
     if draft.event_time and draft.event_time not in {"Dinner", "Luncheon"}:
         missing.append("event_time")

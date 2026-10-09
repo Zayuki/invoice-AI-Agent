@@ -22,6 +22,7 @@ from langchain_core.tools import BaseTool, StructuredTool
 from langchain_openai import ChatOpenAI
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     WithJsonSchema,
@@ -31,6 +32,7 @@ from pydantic import (
 
 from invoice_agent.config import Settings
 from invoice_agent.domain import (
+    COUNT_PATTERN,
     FIXED_HEADINGS,
     DraftStatus,
     EventStyle,
@@ -72,7 +74,7 @@ Never default an outstation destination or fee.
 Time must be exactly Dinner or Luncheon. Treat lunch as Luncheon.
 Language must be Mandarin or English with percentages totalling 100%, formatted like Mandarin (100%), English (100%), or Mandarin (50%) & English (50%).
 Event style must be exactly {choice_list(EVENT_STYLE_VALUES)}.
-Collect either table_count or pax_count as a positive whole number. Never add it to a service description.
+Collect either table_count or pax_count as a positive whole number, optionally ending with ++ for approximate counts like 20++. Never add it to a service description.
 When the owner corrects saved invoice data, use update_draft to replace it.
 Never rename these service headings: {", ".join(FIXED_HEADINGS[:-1])}, and {FIXED_HEADINGS[-1]}.
 Never claim approval. Never send or address anything to a customer.
@@ -129,6 +131,11 @@ class ToolProgress(AsyncCallbackHandler):
 
 # OpenAI rejects the lookahead in Pydantic's Decimal string pattern.
 Money = Annotated[Decimal, WithJsonSchema({"type": "string"})]
+EventCount = Annotated[
+    str,
+    BeforeValidator(str),
+    Field(pattern=rf"^{COUNT_PATTERN.pattern}$"),
+]
 
 
 class InvoiceItemInput(BaseModel):
@@ -167,8 +174,8 @@ class UpdateDraftInput(BaseModel):
     remove_item_kinds: list[OptionalItemKind] = Field(default_factory=list)
     language: str | None = None
     event_style: EventStyle | None = None
-    table_count: int | None = Field(default=None, gt=0)
-    pax_count: int | None = Field(default=None, gt=0)
+    table_count: EventCount | None = None
+    pax_count: EventCount | None = None
 
     @model_validator(mode="after")
     def has_one_event_size(self) -> "UpdateDraftInput":

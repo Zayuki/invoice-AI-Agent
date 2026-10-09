@@ -66,7 +66,7 @@ Create the tunnel once, on the deployment host:
 ```bash
 cloudflared tunnel login          # opens browser, pick your domain
 cloudflared tunnel create invoice-agent
-cloudflared tunnel route dns invoice-agent bot.emceecharrine.com
+cloudflared tunnel route dns invoice-agent bot.leexinyang.com
 cloudflared tunnel token invoice-agent   # prints CLOUDFLARE_TUNNEL_TOKEN
 ```
 
@@ -82,7 +82,7 @@ set +a
 podman-compose up -d
 ```
 
-This starts the API and a `cloudflared` container that tunnels `bot.emceecharrine.com` straight to the `invoice-agent` service — no host port needs to be open.
+This starts the API and a `cloudflared` container that tunnels `bot.leexinyang.com` straight to the `invoice-agent` service — no host port needs to be open.
 
 Confirm the API is healthy:
 
@@ -121,13 +121,13 @@ curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" |
   python3 -m json.tool
 ```
 
-The response should contain `bot.emceecharrine.com` and no `last_error_message`. Telegram sends the configured secret in `X-Telegram-Bot-Api-Secret-Token`. Updates from chats outside `TELEGRAM_ALLOWED_CHAT_IDS` are acknowledged and ignored.
+The response should contain `bot.leexinyang.com` and no `last_error_message`. Telegram sends the configured secret in `X-Telegram-Bot-Api-Secret-Token`. Updates from chats outside `TELEGRAM_ALLOWED_CHAT_IDS` are acknowledged and ignored.
 
 The hostname is fixed once routed with `cloudflared tunnel route dns`, so the webhook only needs registering again if the domain or path changes.
 
 ## Troubleshooting
 
-- No bot response and an empty `inbox` table: verify `getWebhookInfo` contains `bot.emceecharrine.com`, and that the `cloudflared` container is running (`podman logs -f <cloudflared-container>`).
+- No bot response and an empty `inbox` table: verify `getWebhookInfo` contains `bot.leexinyang.com`, and that the `cloudflared` container is running (`podman logs -f <cloudflared-container>`).
 - Telegram reaches the API but updates are ignored: confirm its numeric chat ID appears in `TELEGRAM_ALLOWED_CHAT_IDS`, then restart the compose stack.
 - `429 FreeUsageLimitError`: the configured OpenAI-compatible provider has exhausted its quota or rate limit.
 

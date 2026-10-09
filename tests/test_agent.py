@@ -150,14 +150,20 @@ def test_update_schema_rejects_invalid_event_style() -> None:
         UpdateDraftInput.model_validate({"event_style": "Western banquet"})
 
 
-@pytest.mark.parametrize("table_count", [30, 45])
-def test_update_schema_accepts_positive_table_count(table_count: int) -> None:
+@pytest.mark.parametrize(
+    ("table_count", "expected"),
+    [(30, "30"), ("56", "56"), ("20++", "20++"), ("50++", "50++")],
+)
+def test_update_schema_accepts_table_count(
+    table_count: int | str,
+    expected: str,
+) -> None:
     update = UpdateDraftInput.model_validate({"table_count": table_count})
 
-    assert update.table_count == table_count
+    assert update.table_count == expected
 
 
-@pytest.mark.parametrize("table_count", [0, -1, 2.5])
+@pytest.mark.parametrize("table_count", [0, -1, 2.5, "20+", "++", "about 20"])
 def test_update_schema_rejects_invalid_table_count(table_count: float) -> None:
     with pytest.raises(ValidationError):
         UpdateDraftInput.model_validate({"table_count": table_count})
@@ -167,7 +173,7 @@ def test_update_schema_rejects_invalid_table_count(table_count: float) -> None:
 def test_update_schema_accepts_positive_pax_count(pax_count: int) -> None:
     update = UpdateDraftInput.model_validate({"pax_count": pax_count})
 
-    assert update.pax_count == pax_count
+    assert update.pax_count == str(pax_count)
 
 
 @pytest.mark.parametrize("pax_count", [0, -1, 2.5])
@@ -185,7 +191,7 @@ def test_pax_count_replaces_existing_table_count(
 
     draft = invoice_tools.current_draft()
     assert draft.table_count is None
-    assert draft.pax_count == 300
+    assert draft.pax_count == "300"
 
 
 def test_table_count_replaces_existing_pax_count(
@@ -196,7 +202,7 @@ def test_table_count_replaces_existing_pax_count(
     invoice_tools.update_draft(table_count=30)
 
     draft = invoice_tools.current_draft()
-    assert draft.table_count == 30
+    assert draft.table_count == "30"
     assert draft.pax_count is None
 
 

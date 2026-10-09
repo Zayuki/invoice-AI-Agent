@@ -142,7 +142,7 @@ def format_money(item: InvoiceItem | None) -> str:
 def english_names(names: str) -> str:
     names = re.sub(r"[\u3400-\u4dbf\u4e00-\u9fff]+", "", names)
     parts = re.split(
-        r"\s*(?:&|:|\n|(?<!<)/|\band\b)\s*",
+        r"\s*(?:&|:|;|\n|(?<!<)/|\band\b)\s*",
         names,
         flags=re.IGNORECASE,
     )

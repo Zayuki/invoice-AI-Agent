@@ -51,6 +51,8 @@ def test_render_uses_english_couple_names_only() -> None:
         "Koh Eik Siang / Chong Bei Xuan",
         "Koh Eik Siang and Chong Bei Xuan",
         "Koh Eik Siang: Chong Bei Xuan",
+        "Koh Eik Siang; Chong Bei Xuan;",
+        "Koh Eik Siang; & Chong Bei Xuan",
     ),
 )
 def test_render_normalizes_couple_name_separator(customer_names: str) -> None:
@@ -75,6 +77,12 @@ def test_event_style_and_table_count_are_the_last_event_field() -> None:
     assert language < event_style < first_service
     assert 'data-field="event_style">Western (Around 45 tables)<' in html
     assert "Event Style:" not in html
+
+
+def test_event_style_can_show_approximate_table_count() -> None:
+    html = render_html(replace(make_draft(), table_count="20++"))
+
+    assert 'data-field="event_style">Western (Around 20++ tables)<' in html
 
 
 def test_event_style_can_show_pax_count() -> None:
