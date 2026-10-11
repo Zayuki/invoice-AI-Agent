@@ -91,57 +91,64 @@ flowchart TB
 
 ### Deep Agent control loop
 
+Each owner message starts one agent run. Within that run, the model can call tools repeatedly; each tool result returns to the model before it chooses its next action.
+
 ```mermaid
 flowchart TB
-    msg([💬 Owner message])
-    svc[AgentService.reply<br/>agent.ainvoke · 60s timeout]
-    ckpt[(LangGraph checkpointer<br/>history per chat ID)]
-    llm["🧠 GPT-5.6-Luna via ChatOpenAI<br/>system prompt + history + tool schemas"]
-    decide{Call a tool<br/>or answer?}
-    blocked["🚫 Disabled by harness<br/>filesystem · shell · grep/glob<br/>task · write_todos · subagents"]
+    message([Owner sends invoice details])
+    context["Start agent run<br/>Prompt + chat history + tools"]
 
-    subgraph TOOLS["Allowed tools · args checked by Pydantic"]
-        t1["🔍 get_draft<br/>read draft<br/>create if none"]
-        t2["✍️ update_draft<br/>set · correct · remove<br/>fields and items"]
-        t3["✅ validate_draft<br/>list missing<br/>required fields"]
-        t4["📄 prepare_pdf<br/>render preview<br/>only if valid"]
-        t5["🗑️ discard_draft<br/>cancel draft<br/>needs confirm"]
+    subgraph loop["Repeat until the model gives a final answer"]
+        model["Model reads context<br/>and chooses next action"]
+        action{Next action?}
+        tool["Execute invoice tool<br/>Check inputs and invoice rules"]
+        result["Return structured result<br/>Draft / missing fields / preview"]
+
+        model --> action
+        action -- Tool call --> tool
+        tool --> result
+        result -- Back to model --> model
     end
 
-    domain["domain.py<br/>Decimal totals · rules"]
-    render["PdfRenderer<br/>Jinja2 → Chromium → pypdf<br/>exactly 1 A4 page"]
-    store[(SQLite drafts<br/>versioned · SHA-256)]
-    reply([📨 AgentReply<br/>short text + PDF if ready])
+    answer[Agent returns final text]
+    preview{PDF preview ready<br/>for this reply?}
+    send_pdf(["Send preview to owner<br/>Approve / Edit / Cancel"])
+    send_text(["Send short reply<br/>One question if details are missing"])
 
-    msg --> svc --> llm --> decide
-    svc <-.-> ckpt
-    blocked -.- llm
-    decide --> t1 & t2 & t3 & t4 & t5
-    t1 & t2 & t3 & t5 --> domain
-    t4 --> render
-    domain --> store
-    render --> store
-    store -. JSON result back to model .-> llm
-    decide -- answer --> reply
+    message --> context --> model
+    action -- Final answer --> answer
+    answer --> preview
+    preview -- Yes --> send_pdf
+    preview -- No --> send_text
 
-    classDef io fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef step fill:#f1f5f9,stroke:#64748b,color:#0f172a
-    classDef decideC fill:#fef3c7,stroke:#d97706,color:#78350f
-    classDef storeC fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
-    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef message fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef model fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    classDef application fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef decision fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef tool fill:#dcfce7,stroke:#16a34a,color:#14532d
 
-    class msg,reply io
-    class svc,llm,domain,render step
-    class decide decideC
-    class ckpt,store storeC
-    class blocked bad
-    class t1,t2,t3,t4,t5 tool
+    class message,send_pdf,send_text message
+    class model model
+    class context,result,answer application
+    class action,preview decision
+    class tool tool
 ```
 
-The system prompt defines the conversational policy: preserve supplied names, translate reception and service details to English, never invent facts or prices, use tools for every draft operation, and ask exactly one short clarifying question at a time. `ToolProgress` maps each structured call to a short Telegram status so the owner can see whether the agent is reading, updating, validating, generating, or cancelling.
+The model chooses a tool; application code executes it. These are the only allowed tools:
 
-The model decides which allowed tool to call, while deterministic application code owns state transitions, validation, totals, file generation, and approval. This keeps language understanding probabilistic but invoice and approval correctness enforceable.
+| Tool | What application code does |
+| --- | --- |
+| `get_draft` | Reads the current draft from SQLite, creating one if needed. |
+| `update_draft` | Checks supplied fields with Pydantic, merges or removes items, checks totals, and saves a new draft version. |
+| `validate_draft` | Returns whether the draft is complete and lists any missing required fields. |
+| `prepare_pdf` | Validates the draft, renders exactly one A4 page or reuses its existing preview, and records the file digest and draft version. |
+| `discard_draft` | Cancels the draft only when `confirm=true`. |
+
+The system prompt directs the model to read before changing a draft and validate after each update. Missing details lead to one short question and a wait for the owner's next message. A complete draft leads to `prepare_pdf`; its result returns to the model before the final answer. The reply includes a PDF only when `prepare_pdf` was called during this run and the saved draft has a ready preview.
+
+Chat history is checkpointed by LangGraph using the chat ID as `thread_id`; invoice drafts are stored separately in SQLite. `ToolProgress` updates the Telegram status as tools run. Filesystem, shell, search, todo, and subagent tools are disabled.
+
+Non-text messages and `/reset` are handled before this loop. A run has a 60-second timeout; empty answers and unhandled errors reach the worker's failure path. Transient network errors on messages are retried once, then the owner gets a Retry button. Approval buttons are handled separately by application code, which checks the preview version and file digest. The bot never contacts customers; the owner approves and manually forwards the PDF.
 
 ## Tech Stack
 
