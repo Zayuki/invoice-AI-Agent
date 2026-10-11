@@ -12,6 +12,71 @@ The bot never contacts customers. You manually forward the approved PDF.
 
 ### Runtime flow
 
+```mermaid
+flowchart TB
+    owner([👤 Owner types invoice details])
+
+    subgraph S1["① Receive · FastAPI"]
+        direction TB
+        hook[POST /telegram/webhook]
+        gate{Secret, allowlist,<br/>new update_id?}
+        inbox[(SQLite inbox)]
+        hook --> gate
+        gate -- yes --> inbox
+    end
+
+    subgraph S2["② Understand · Deep Agent"]
+        direction TB
+        agent[Codex agent<br/>reads + updates draft]
+        valid{Draft complete?}
+        agent --> valid
+    end
+
+    subgraph S3["③ Render · PDF"]
+        direction TB
+        render[Jinja2 → Playwright → pypdf]
+        page{Exactly 1 A4 page?}
+        render --> page
+    end
+
+    subgraph S4["④ Review · Owner"]
+        direction TB
+        preview[Preview + buttons]
+        choice{Owner taps}
+        check{Version + SHA-256<br/>still match?}
+        preview --> choice
+        choice -- Approve --> check
+    end
+
+    done([📄 PDF sent to owner<br/>owner forwards to client])
+
+    owner --> hook
+    gate -- no --> drop[Ignore]
+    inbox -- async worker --> agent
+    valid -- no --> ask[Ask 1 short question]
+    valid -- yes --> render
+    page -- no --> fail[Error + Retry button]
+    page -- yes --> preview
+    choice -- Edit --> ask
+    choice -- Cancel --> cancel[Draft cancelled]
+    check -- no --> stale[Action outdated]
+    check -- yes --> done
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef step fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef decide fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef store fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#14532d
+
+    class owner io
+    class hook,agent,render,preview step
+    class gate,valid,page,choice,check decide
+    class inbox store
+    class drop,fail,cancel,stale bad
+    class ask,done good
+```
+
 1. The owner sends invoice facts or a button action through Telegram.
 2. Telegram posts the update to `POST /telegram/webhook` with the webhook secret.
 3. FastAPI compares the secret, checks the chat allowlist, deduplicates the Telegram `update_id`, writes the update to the SQLite inbox, wakes the worker, and returns immediately.
