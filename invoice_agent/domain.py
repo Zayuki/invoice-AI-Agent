@@ -8,13 +8,16 @@ from typing import Literal, get_args
 
 EventStyle = Literal["Oriental Style", "Western Style", "Buffet Style"]
 
-ItemKind = Literal["primary", "outstation", "rom", "floor_manager", "dj"]
-OptionalItemKind = Literal["outstation", "rom", "floor_manager", "dj"]
+ItemKind = Literal[
+    "primary", "outstation", "rom", "floor_manager", "tea_ceremony", "dj"
+]
+OptionalItemKind = Literal["outstation", "rom", "floor_manager", "tea_ceremony", "dj"]
 
 SERVICE_HEADINGS: dict[str, str] = {
     "primary": "Professional Emcee Hosting",
-    "rom": "ROM Hosting (Before Dinner Start)",
+    "rom": "ROM Hosting (Before Dinner Begins)",
     "floor_manager": "Floor Manager",
+    "tea_ceremony": "Tea Ceremony (Before Dinner/Luncheon Begins)",
     "dj": "Wedding DJ Services",
 }
 
@@ -23,6 +26,7 @@ FIXED_HEADINGS: tuple[str, ...] = (
     SERVICE_HEADINGS["rom"],
     "Program Planning & Management",
     SERVICE_HEADINGS["floor_manager"],
+    SERVICE_HEADINGS["tea_ceremony"],
     SERVICE_HEADINGS["dj"],
 )
 

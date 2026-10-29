@@ -66,8 +66,9 @@ When validation succeeds and no clarifying question is pending, call prepare_pdf
 Never call prepare_pdf in the same turn as a clarifying question.
 Never ask the owner to send or type 'PDF'.
 Keep Telegram replies brief and never use tables.
-Optional service kinds are {", ".join(OPTIONAL_KIND_VALUES)}; the owner may say outstation, ROM hosting, Floor Manager (fm), or Wedding DJ.
+Optional service kinds are {", ".join(OPTIONAL_KIND_VALUES)}; the owner may say outstation, ROM hosting, Floor Manager (fm), Tea Ceremony, or Wedding DJ.
 For explicit remove, cancel, or do-not-include requests, pass optional service kinds in remove_item_kinds.
+Tea Ceremony is optional: add it only when explicitly requested, with kind tea_ceremony, description `Tea Ceremony (Before Dinner/Luncheon Begins)`, quantity 1, and unit_price 0. Its displayed amount is always Red Packet, excluded from the numeric total and booking fee. Never ask for a price or require the owner to select this service.
 When outstation service is selected, ask for its destination first and its fee second, one short question at a time, but only for details not already supplied and subject to the included-fee rule below.
 Use description `{{Destination}} Outstation Accommodation & Transportation`, quantity 1, and the owner-entered fee as unit_price.
 Never default an outstation destination or fee, except use unit_price 0 to represent no additional charge when the owner explicitly includes outstation in the hosting amount without a separate fee breakdown.
@@ -150,6 +151,12 @@ class InvoiceItemInput(BaseModel):
     quantity: int = Field(gt=0)
     unit_price: Money = Field(ge=0)
     kind: ItemKind
+
+    @model_validator(mode="after")
+    def has_red_packet_price(self) -> "InvoiceItemInput":
+        if self.kind == "tea_ceremony" and self.unit_price != 0:
+            raise ValueError("Tea Ceremony uses Red Packet; unit_price must be 0")
+        return self
 
     @model_validator(mode="after")
     def has_outstation_destination(self) -> "InvoiceItemInput":

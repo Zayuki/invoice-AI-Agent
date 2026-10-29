@@ -124,10 +124,12 @@ def test_render_uses_correct_wedding_date_ordinals(
 def test_optional_rows_are_omitted() -> None:
     html = render_html(make_draft())
 
-    assert "ROM Hosting (Before Dinner Start)" not in html
+    assert "ROM Hosting (Before Dinner Begins)" not in html
     assert "Wedding DJ Services" not in html
     assert "Floor Manager" not in html
     assert "Outstation Accommodation" not in html
+    assert "Tea Ceremony" not in html
+    assert "Red Packet" not in html
 
 
 def test_selected_optional_rows_and_totals_are_rendered() -> None:
@@ -141,6 +143,37 @@ def test_selected_optional_rows_and_totals_are_rendered() -> None:
     assert "Floor Manager" in html
     assert ">2308.00<" in html
     assert ">1154.00<" in html
+
+
+@pytest.mark.parametrize("event_time", ("Dinner", "Luncheon"))
+def test_tea_ceremony_shows_red_packet_without_changing_totals(
+    event_time: str,
+) -> None:
+    items = (
+        InvoiceItem("Professional Emcee Hosting", 1, Decimal(2188)),
+        InvoiceItem("Tea Ceremony", 1, Decimal(0), "tea_ceremony"),
+        InvoiceItem("Wedding DJ Services", 1, Decimal(300), "dj"),
+    )
+
+    html = render_html(replace(make_draft(items), event_time=event_time))
+
+    assert (
+        'data-field="item_E_desc">Tea Ceremony (Before Dinner/Luncheon Begins)<' in html
+    )
+    assert 'data-field="item_E_amount">Red Packet<' in html
+    assert 'data-field="item_F_desc">Wedding DJ Services<' in html
+    assert 'data-field="item_F_amount">300.00<' in html
+    assert html.index('data-field="item_E_desc"') < html.index(
+        'data-field="item_F_desc"'
+    )
+    assert re.findall(r'<td class="col-no">([A-F])</td>', html) == ["A", "B", "C", "D"]
+    assert (
+        'data-field="total_amount" '
+        'data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_F_amount)">'
+        "2488.00<" in html
+    )
+    assert 'data-field="booking_fee">1244.00<' in html
+    assert 'data-field="balance_due">1244.00<' in html
 
 
 def test_outstation_fee_is_added_to_hosting_amount() -> None:
@@ -159,7 +192,7 @@ def test_outstation_fee_is_added_to_hosting_amount() -> None:
     assert "- KL Outstation Accommodation &amp; Transportation (RM 400)" in html
     assert 'data-field="item_A_amount">2588.00<' in html
     assert (
-        'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">2588.00<'
+        'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_F_amount)">2588.00<'
         in html
     )
     assert 'data-field="booking_fee">1294.00<' in html
@@ -196,7 +229,7 @@ def test_outstation_with_inclusive_or_separate_pricing(
     assert f'data-field="item_A_amount">{total}<' in html
     assert (
         'data-field="total_amount" '
-        'data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">'
+        'data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_F_amount)">'
         f"{total}<" in html
     )
     half_total = Decimal(total) / 2
@@ -209,15 +242,17 @@ def test_service_headings_ignore_agent_descriptions() -> None:
         InvoiceItem("Wedding Reception emcee service (25 tables)", 1, Decimal(2188)),
         InvoiceItem("Changed ROM", 1, Decimal(488), "rom"),
         InvoiceItem("Changed floor manager", 1, Decimal(120), "floor_manager"),
+        InvoiceItem("Changed Tea Ceremony", 1, Decimal(0), "tea_ceremony"),
         InvoiceItem("Changed DJ", 1, Decimal(300), "dj"),
     )
 
     html = render_html(make_draft(items))
 
     assert "Professional Emcee Hosting" in html
-    assert "ROM Hosting (Before Dinner Start)" in html
+    assert "ROM Hosting (Before Dinner Begins)" in html
     assert "Program Planning &amp; Management" in html
     assert "Floor Manager" in html
+    assert "Tea Ceremony (Before Dinner/Luncheon Begins)" in html
     assert "Wedding DJ Services" in html
     assert "Wedding Reception emcee service" not in html
     assert "Changed" not in html
@@ -229,7 +264,7 @@ def test_manual_booking_fee_updates_rendered_balance_only() -> None:
     html = render_html(draft)
 
     assert (
-        'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">2188.00<'
+        'data-field="total_amount" data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_F_amount)">2188.00<'
         in html
     )
     assert 'data-field="booking_fee">800.00<' in html
@@ -244,7 +279,7 @@ def test_rendered_item_numbers_are_sequential() -> None:
 
     html = render_html(make_draft(items))
     numbers = re.findall(
-        r'data-item-row="[A-E]">\s*<td class="col-no">([A-E])',
+        r'data-item-row="[A-F]">\s*<td class="col-no">([A-F])',
         html,
     )
 
@@ -495,6 +530,7 @@ async def test_pdf_with_all_optional_services_is_one_page(tmp_path) -> None:
         ),
         InvoiceItem("ROM Hosting", 1, Decimal(488), "rom"),
         InvoiceItem("Floor Manager", 1, Decimal(120), "floor_manager"),
+        InvoiceItem("Tea Ceremony", 1, Decimal(0), "tea_ceremony"),
         InvoiceItem("Wedding DJ Services", 1, Decimal(300), "dj"),
     )
 

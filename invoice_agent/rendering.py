@@ -44,8 +44,12 @@ OPTIONAL_ROW_PATTERNS = {
         r'<tr class="sub-note alt">.*?</tr>',
         re.DOTALL,
     ),
+    "tea_ceremony": re.compile(
+        r'<tr class="section-row alt" data-item-row="E">.*?</tr>',
+        re.DOTALL,
+    ),
     "dj": re.compile(
-        r'<tr class="section-row alt" data-item-row="E">.*?'
+        r'<tr class="section-row alt" data-item-row="F">.*?'
         r'<tr class="sub-note alt">.*?</tr>\s*'
         r'<tr class="sub-note alt">.*?</tr>',
         re.DOTALL,
@@ -83,6 +87,16 @@ def clean_fixed_tag(match: re.Match[str]) -> str:
     return tag.replace(class_match.group(0), f'class="{cleaned}"')
 
 
+def add_tea_ceremony_row(source: str) -> str:
+    if 'data-field="item_F_desc"' in source:
+        return source
+    source = source.replace("item_E_", "item_F_")
+    source = source.replace('data-item-row="E"', 'data-item-row="F"')
+    row = Path(__file__).with_name("templates") / "tea_ceremony.html"
+    dj_row = '<tr class="section-row alt" data-item-row="F">'
+    return source.replace(dj_row, row.read_text(encoding="utf-8") + dj_row, 1)
+
+
 def build_template_source(source: str) -> str:
     fields = (
         "invoice_no_title",
@@ -105,11 +119,14 @@ def build_template_source(source: str) -> str:
         "item_E_desc",
         "item_E_qty",
         "item_E_amount",
+        "item_F_desc",
+        "item_F_qty",
+        "item_F_amount",
         "total_amount",
         "booking_fee",
         "balance_due",
     )
-    result = source
+    result = add_tea_ceremony_row(source)
     for field in fields:
         result = replace_field(result, field, "{{ values." + field + " }}")
     result = result.replace(' contenteditable="true"', "")
@@ -192,6 +209,7 @@ def template_values(draft: InvoiceDraft) -> dict[str, str | int]:
     outstation = find_item(draft, "outstation")
     rom = find_item(draft, "rom")
     floor_manager = find_item(draft, "floor_manager")
+    tea_ceremony = find_item(draft, "tea_ceremony")
     dj = find_item(draft, "dj")
     totals = calculate_totals(draft.items, draft.booking_fee)
     return {
@@ -219,9 +237,12 @@ def template_values(draft: InvoiceDraft) -> dict[str, str | int]:
         "item_D_desc": SERVICE_HEADINGS["floor_manager"] if floor_manager else "",
         "item_D_qty": floor_manager.quantity if floor_manager else "",
         "item_D_amount": format_money(floor_manager),
-        "item_E_desc": SERVICE_HEADINGS["dj"] if dj else "",
-        "item_E_qty": dj.quantity if dj else "",
-        "item_E_amount": format_money(dj),
+        "item_E_desc": SERVICE_HEADINGS["tea_ceremony"] if tea_ceremony else "",
+        "item_E_qty": tea_ceremony.quantity if tea_ceremony else "",
+        "item_E_amount": "Red Packet" if tea_ceremony else "",
+        "item_F_desc": SERVICE_HEADINGS["dj"] if dj else "",
+        "item_F_qty": dj.quantity if dj else "",
+        "item_F_amount": format_money(dj),
         "total_amount": f"{totals.total:.2f}",
         "booking_fee": f"{totals.booking_fee:.2f}",
         "balance_due": f"{totals.balance:.2f}",
@@ -263,7 +284,7 @@ def remove_unselected_rows(rendered: str, draft: InvoiceDraft) -> str:
 
 def renumber_item_rows(rendered: str) -> str:
     pattern = re.compile(
-        r'data-item-row="[A-E]".*?<td class="col-no">(?P<label>[A-E])</td>',
+        r'data-item-row="[A-F]".*?<td class="col-no">(?P<label>[A-F])</td>',
         re.DOTALL,
     )
     result = rendered
@@ -325,7 +346,7 @@ class PdfRenderer:
                 format="A4",
                 print_background=True,
                 prefer_css_page_size=True,
-                scale=0.85,
+                scale=0.82 if find_item(draft, "tea_ceremony") else 0.85,
             )
         finally:
             await page.close()

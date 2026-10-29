@@ -141,6 +141,18 @@ def test_included_outstation_is_saved_without_an_additional_charge(
     assert draft.items[1].description == "KL Outstation Accommodation & Transportation"
 
 
+def test_tea_ceremony_rejects_a_numeric_fee() -> None:
+    with pytest.raises(ValidationError, match="Tea Ceremony uses Red Packet"):
+        InvoiceItemInput.model_validate(
+            {
+                "description": "Tea Ceremony (Before Dinner/Luncheon Begins)",
+                "quantity": 1,
+                "unit_price": "500",
+                "kind": "tea_ceremony",
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "description",
     (
@@ -381,10 +393,11 @@ def test_later_optional_service_preserves_primary_service(
 @pytest.mark.parametrize(
     ("removed_kind", "expected_kinds"),
     (
-        ("outstation", ["primary", "rom", "floor_manager", "dj"]),
-        ("rom", ["primary", "outstation", "floor_manager", "dj"]),
-        ("floor_manager", ["primary", "outstation", "rom", "dj"]),
-        ("dj", ["primary", "outstation", "rom", "floor_manager"]),
+        ("outstation", ["primary", "rom", "floor_manager", "tea_ceremony", "dj"]),
+        ("rom", ["primary", "outstation", "floor_manager", "tea_ceremony", "dj"]),
+        ("floor_manager", ["primary", "outstation", "rom", "tea_ceremony", "dj"]),
+        ("tea_ceremony", ["primary", "outstation", "rom", "floor_manager", "dj"]),
+        ("dj", ["primary", "outstation", "rom", "floor_manager", "tea_ceremony"]),
     ),
 )
 def test_optional_service_can_be_removed(
@@ -417,6 +430,12 @@ def test_optional_service_can_be_removed(
                 "quantity": 1,
                 "unit_price": "120",
                 "kind": "floor_manager",
+            },
+            {
+                "description": "Tea Ceremony (Before Dinner/Luncheon Begins)",
+                "quantity": 1,
+                "unit_price": "0",
+                "kind": "tea_ceremony",
             },
             {
                 "description": "Wedding DJ",
@@ -545,8 +564,9 @@ def test_system_prompt_uses_domain_constants() -> None:
 def test_renderer_uses_service_headings() -> None:
     values = SERVICE_HEADINGS.values()
     assert "Professional Emcee Hosting" in values
-    assert "ROM Hosting (Before Dinner Start)" in values
+    assert "ROM Hosting (Before Dinner Begins)" in values
     assert "Floor Manager" in values
+    assert "Tea Ceremony (Before Dinner/Luncheon Begins)" in values
     assert "Wedding DJ Services" in values
 
 
