@@ -166,6 +166,44 @@ def test_outstation_fee_is_added_to_hosting_amount() -> None:
     assert 'data-field="balance_due">1294.00<' in html
 
 
+@pytest.mark.parametrize(
+    ("primary_price", "outstation_price", "fee_label", "total"),
+    (
+        ("2388", "0", "Included", "2388.00"),
+        ("1888", "500", "RM 500", "2388.00"),
+        ("2388", "500", "RM 500", "2888.00"),
+    ),
+)
+def test_outstation_with_inclusive_or_separate_pricing(
+    primary_price: str,
+    outstation_price: str,
+    fee_label: str,
+    total: str,
+) -> None:
+    items = (
+        InvoiceItem("Professional Emcee Hosting", 1, Decimal(primary_price)),
+        InvoiceItem(
+            "KL Outstation Accommodation & Transportation",
+            1,
+            Decimal(outstation_price),
+            "outstation",
+        ),
+    )
+
+    html = render_html(make_draft(items))
+
+    assert f"- KL Outstation Accommodation &amp; Transportation ({fee_label})" in html
+    assert f'data-field="item_A_amount">{total}<' in html
+    assert (
+        'data-field="total_amount" '
+        'data-formula="SUM(item_A_amount,item_B_amount,item_D_amount,item_E_amount)">'
+        f"{total}<" in html
+    )
+    half_total = Decimal(total) / 2
+    assert f'data-field="booking_fee">{half_total:.2f}<' in html
+    assert f'data-field="balance_due">{half_total:.2f}<' in html
+
+
 def test_service_headings_ignore_agent_descriptions() -> None:
     items = (
         InvoiceItem("Wedding Reception emcee service (25 tables)", 1, Decimal(2188)),

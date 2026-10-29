@@ -273,6 +273,8 @@ Tool scope is bound by `InvoiceTools.chat_id`, not selected by the model. None o
 
 The system prompt directs the model to read before changing a draft and validate after each update. Missing details lead to one short question and a wait for the owner's next message. A complete draft leads to `prepare_pdf`; its result returns to the model before the final answer. The reply includes a PDF only when `prepare_pdf` was called during this run and the saved draft has a ready preview.
 
+An edit such as `emcee hosting amount change to 2388 (including kl outstation fee)` adds the KL outstation line and keeps the combined hosting amount at RM 2,388. If no separate outstation fee is supplied or saved, the item carries zero additional charge and displays `(Included)`. A known fee is deducted from the primary item's price to avoid double charging. With `2388 and outstation KL 500`, the fees are separate and the combined hosting amount is RM 2,888.
+
 Chat history is checkpointed by LangGraph using the chat ID as `thread_id`; invoice drafts are stored separately in SQLite. `ToolProgress` updates the Telegram status as tools run. Filesystem, shell, search, todo, and subagent tools are disabled.
 
 Non-text messages and `/reset` are handled before this loop. A run has a 60-second timeout; empty answers and unhandled errors reach the worker's failure path. Transient network errors on messages are retried once, then the owner gets a Retry button. Approval buttons are handled separately by application code, which checks the preview version and file digest. The bot never contacts customers; the owner approves and manually forwards the PDF.

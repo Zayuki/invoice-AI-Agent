@@ -108,6 +108,39 @@ def test_outstation_item_accepts_owner_destination_and_fee() -> None:
     assert item.unit_price == Decimal("300.00")
 
 
+def test_included_outstation_is_saved_without_an_additional_charge(
+    invoice_tools: InvoiceTools,
+) -> None:
+    tools = {tool.name: tool for tool in invoice_tools.as_tools()}
+
+    result = json.loads(
+        tools["update_draft"].invoke(
+            {
+                "items": [
+                    {
+                        "description": "Professional Emcee Hosting",
+                        "quantity": 1,
+                        "unit_price": "2388",
+                        "kind": "primary",
+                    },
+                    {
+                        "description": "KL Outstation Accommodation & Transportation",
+                        "quantity": 1,
+                        "unit_price": "0",
+                        "kind": "outstation",
+                    },
+                ]
+            }
+        )
+    )
+
+    assert [item["kind"] for item in result["items"]] == ["primary", "outstation"]
+    draft = invoice_tools.current_draft()
+    assert draft.items[0].unit_price == Decimal(2388)
+    assert draft.items[1].unit_price == Decimal(0)
+    assert draft.items[1].description == "KL Outstation Accommodation & Transportation"
+
+
 @pytest.mark.parametrize(
     "description",
     (

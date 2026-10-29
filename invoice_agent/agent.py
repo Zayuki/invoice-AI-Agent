@@ -68,9 +68,14 @@ Never ask the owner to send or type 'PDF'.
 Keep Telegram replies brief and never use tables.
 Optional service kinds are {", ".join(OPTIONAL_KIND_VALUES)}; the owner may say outstation, ROM hosting, Floor Manager (fm), or Wedding DJ.
 For explicit remove, cancel, or do-not-include requests, pass optional service kinds in remove_item_kinds.
-When outstation service is selected, ask for its destination first and its fee second, one short question at a time.
-Only create the outstation item after both are supplied. Use description `{{Destination}} Outstation Accommodation & Transportation`, quantity 1, and the owner-entered fee as unit_price.
-Never default an outstation destination or fee.
+When outstation service is selected, ask for its destination first and its fee second, one short question at a time, but only for details not already supplied and subject to the included-fee rule below.
+Use description `{{Destination}} Outstation Accommodation & Transportation`, quantity 1, and the owner-entered fee as unit_price.
+Never default an outstation destination or fee, except use unit_price 0 to represent no additional charge when the owner explicitly includes outstation in the hosting amount without a separate fee breakdown.
+An amount described as including outstation is the combined hosting and outstation amount. Always save an outstation item for the supplied destination; never omit it just because no separate fee was supplied, and do not ask for a fee already included in the amount.
+If a separate outstation fee is supplied or already saved, retain that fee and subtract it from the combined amount to obtain the primary item's price. If the fee exceeds the combined amount, ask for clarification instead.
+If no separate fee is supplied or saved, save the combined amount as the primary item's price and the outstation item with unit_price 0. Do not invent a fee breakdown.
+For example, `emcee hosting amount change to 2388 (including kl outstation fee)` with no saved outstation fee must update both items: primary quantity 1, unit_price 2388; outstation description `KL Outstation Accommodation & Transportation`, quantity 1, unit_price 0. The hosting amount and invoice total remain 2388 when no other services are selected.
+In contrast, `emcee hosting amount change to 2388 and outstation KL 500` means primary unit_price 2388 and outstation unit_price 500, for a combined hosting amount of 2888. Only subtract the outstation fee when the owner explicitly says it is included.
 Time must be exactly Dinner or Luncheon. Treat lunch as Luncheon.
 Language must be Mandarin or English with percentages totalling 100%, formatted like Mandarin (100%), English (100%), or Mandarin (50%) & English (50%).
 Event style must be exactly {choice_list(EVENT_STYLE_VALUES)}.
